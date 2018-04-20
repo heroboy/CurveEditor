@@ -1,0 +1,135 @@
+body {
+    margin: 0;
+}
+
+canvas {
+    width: 100vw;
+    height: 100vh;
+    display: block;
+}
+
+#uilayer {
+    position: absolute;
+    top: 0;
+    left: 0;
+	width: 230px;
+	font-size: 12px;
+}
+
+.ControlPointEditor {}
+
+.ControlPointEditor .AxisEditor {
+    width: 32%;
+    display: inline-block
+}
+
+.ControlPointEditor .AxisEditor input {
+    width: 80%
+}
+
+.ControlPointEditor div {
+    margin: 4px;
+}
+
+.CurveEditor div {
+    margin: 4px;
+}
+
+.CurveEditor
+{
+	font-size:12px;
+}
+
+.panel {
+    background-color: rgba(0, 0, 0, 0.4);
+    color: white;
+    margin-top: 5px;
+}
+
+button {
+    width: 90px;
+    border: 1px solid gray;
+    padding: 1px;
+    margin: 2px;
+    font-size: 11px;
+    background-color: lightgray;
+}
+
+button:disabled {
+    filter: grayscale(1);
+}
+
+button:hover:enabled:not(:active) {
+    background-color: white;
+    transition: all 0.1s;
+}
+
+button:active:enabled {
+    background-color: darkgray;
+    transition: all 0.1s;
+}
+
+.panel .title {
+    text-align: center;
+    border-bottom: 1px solid white;
+    border-top: 1px solid white;
+    border-left: 1px solid white;
+    border-right: 1px solid white;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+    background-color: rgba(1, 1, 1, 1);
+    cursor: pointer;
+    user-select: none;
+    -moz-user-select: -moz-none;
+	-webkit-user-select: none;
+	font-size: 15px;
+}
+
+.panel .content {
+    padding: 10px;
+    overflow: hidden;
+    border-left: 1px solid white;
+    border-right: 1px solid white;
+    border-bottom: 1px solid white;
+    border-bottom-left-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
+.panel .show {
+    height: auto;
+    min-height: 5px;
+    transition: all 0.3s linear;
+}
+
+.panel .show>* {
+    opacity: 1;
+    transition: all 0.3s linear;
+}
+
+.panel .hide {
+    height: 0px;
+    min-height: 0px;
+    color: rgba(0, 0, 0, 0);
+    transition: all 0.3s linear
+}
+
+.panel .hide>* {
+    opacity: 0;
+    transition: all 0.3s linear
+}
+
+.panel input {
+    background-color: rgba(0, 0, 0, 0.2);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    transition: all 0.2s
+}
+
+.panel input:disabled {
+    color: gray;
+}
+
+.panel input:focus {
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    transition: all 0.2s
+}
