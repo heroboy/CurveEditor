@@ -157,6 +157,7 @@ var main = (function (exports) {
         applyOperator(op) { return false; }
         getParameter(key) { }
         setParameter(key, value) { }
+        getHelperLine() { return []; }
     }
     //# sourceMappingURL=AbstractCurve.js.map
 
@@ -717,6 +718,14 @@ var main = (function (exports) {
             }
             return false;
         }
+        getHelperLine() {
+            var arr = [];
+            for (var i = 1; i < this._positions.length; i += 2) {
+                arr.push(this._positions[i], this._positions[i + 1]);
+                arr.push(this._positions[i], this._positions[i - 1]);
+            }
+            return arr;
+        }
         _rebuild() {
             var curve = new THREE.CurvePath();
             for (var i = 0; i + 2 < this._positions.length; i += 2) {
@@ -929,8 +938,17 @@ var main = (function (exports) {
             this.rebuild();
             return true;
         }
+        getHelperLine() {
+            var arr = [];
+            for (var i = 0; i < this._positions.length; i += 3) {
+                if (i > 0)
+                    arr.push(this._positions[i], this._positions[i - 1]);
+                if (i < this._positions.length - 1)
+                    arr.push(this._positions[i], this._positions[i + 1]);
+            }
+            return arr;
+        }
     }
-    //# sourceMappingURL=CubicBezierCurve3.js.map
 
     //控制形态的点的数量
     const FIX_POINT_COUNT = 2;
@@ -1230,6 +1248,9 @@ var main = (function (exports) {
             }
             return -1;
         }
+        getHelperLine() {
+            return [this.startPoint, this.endPoint];
+        }
     }
     //从2开始的rotations
     function findRotation(rotations, t) {
@@ -1442,10 +1463,21 @@ var main = (function (exports) {
                 depthWrite: true,
                 depthFunc: THREE.AlwaysDepth,
             });
-            this.line = new THREE.Line(this.geometry, this.material);
-            this.line.material = [this.material, this.material, this.material, this.material];
-            this.line.castShadow = true;
+            this.line = new THREE.Line(this.geometry, [this.material]);
             this.line.renderOrder = 20;
+            var helpLineBuffer = new THREE.BufferGeometry();
+            var helpLineMaterial = new THREE.LineDashedMaterial({
+                color: 0xffff00,
+                depthTest: true,
+                depthWrite: true,
+                depthFunc: THREE.AlwaysDepth,
+                gapSize: 10,
+                dashSize: 10,
+                scale: 1
+            });
+            helpLineBuffer.addAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3).setDynamic(true));
+            this.helpLine = new THREE.LineSegments(helpLineBuffer, helpLineMaterial);
+            this.line.add(this.helpLine);
             this._updateCurveToControlPoint();
             this._updateGeometry();
         }
@@ -1456,9 +1488,12 @@ var main = (function (exports) {
         set color(val) { this.material.color.set(val); }
         get visible() { return this.line.visible; }
         set visible(val) {
-            this.line.visible = val;
-            for (var cp of this.controlPoints) {
-                cp.visible = val;
+            if (this.line.visible !== val) {
+                this.line.visible = val;
+                for (var cp of this.controlPoints) {
+                    cp.visible = val;
+                }
+                app.getUI().refreshSelectionControlPoints();
             }
         }
         toJSON() {
@@ -1514,6 +1549,14 @@ var main = (function (exports) {
             if (this.line && this.line.parent) {
                 this.line.parent.remove(this.line);
             }
+            if (Array.isArray(this.line.material)) {
+                for (var m of this.line.material) {
+                    m.dispose();
+                }
+            }
+            else {
+                this.line.material.dispose();
+            }
             for (var cp of this.controlPoints) {
                 cp.dispose();
             }
@@ -1523,6 +1566,7 @@ var main = (function (exports) {
         attachTo(app) {
             this._app = app;
             app.scene.add(this.line);
+            this.line.add(this.helpLine);
             for (var cp of this.controlPoints)
                 cp.attachTo(app);
         }
@@ -1561,7 +1605,6 @@ var main = (function (exports) {
             for (var i = 0; i < results.length; ++i)
                 totalPoints += results[i].positions.length;
             if (attr.array.length < totalPoints * 3) {
-                //attr.array = new Float32Array(totalPoints * 3 + 50 * 3);
                 attr = new THREE.BufferAttribute(new Float32Array(totalPoints * 3 + 50 * 3), 3);
                 geometry.removeAttribute('position');
                 geometry.addAttribute('position', attr);
@@ -1585,6 +1628,22 @@ var main = (function (exports) {
             attr.needsUpdate = true;
             if (geometry.boundingSphere)
                 geometry.boundingSphere.radius = 99999999999999999;
+            //update helpline
+            var helpLine = this.helpLine;
+            var helpLineGeom = helpLine.geometry;
+            var helpLineAttr = helpLineGeom.getAttribute('position');
+            var helpLineData = this.curve.getHelperLine();
+            if (helpLineData.length > helpLineAttr.array.length) {
+                helpLineAttr = new THREE.BufferAttribute(new Float32Array(helpLineData.length * 3 + 10 * 3), 3);
+                helpLineGeom.addAttribute('position', helpLineAttr);
+            }
+            helpLineAttr.copyVector3sArray(helpLineData);
+            helpLineAttr.count = helpLineData.length;
+            helpLineGeom.setDrawRange(0, helpLineData.length);
+            helpLineAttr.needsUpdate = true;
+            helpLine.computeLineDistances();
+            if (helpLineGeom.boundingSphere)
+                helpLineGeom.boundingSphere.radius = 999999999999999;
             this.dirtyForAnimation = true;
         }
         //operations
@@ -2384,15 +2443,21 @@ var main = (function (exports) {
             this._curveDirty = false;
             this._createPreviewObject();
             this._previewObject.visible = this._enable;
-            var gui = app.rootGui.addFolder('Animation');
-            gui.add(this, 'enable');
-            gui.add(this, 'play');
-            gui.add(this, 'pause');
-            gui.add(this, '_timeScale', 0, 4);
-            gui.open();
+            //var gui = app.rootGui.addFolder('Animation');
+            //gui.add(this, 'enable');
+            //gui.add(this, 'play');
+            //gui.add(this, 'pause');
+            //gui.add(this, '_timeScale', 0, 4);
+            //gui.open();
         }
-        play() {
-            if (!this._playing) {
+        get isPlaying() {
+            return this._playing && this.enable;
+        }
+        get timeScale() { return this._timeScale; }
+        set timeScale(val) { this._timeScale = val; }
+        play(curve) {
+            if (!this._playing || !this.enable) {
+                this._curve = curve;
                 this.enable = true;
                 this._action.play();
                 this._playing = true;
@@ -2402,6 +2467,9 @@ var main = (function (exports) {
             if (this._playing) {
                 this._playing = false;
             }
+        }
+        stop() {
+            this.enable = false;
         }
         get enable() { return this._enable; }
         set enable(val) {
@@ -2415,7 +2483,11 @@ var main = (function (exports) {
         }
         _updateCurveAnimation() {
             if (!this._curve) {
-                this._curve = app.curves[0];
+                this._curve = app.selection.selectionCurves[0];
+                if (!this._curve)
+                    this._curve = app.curves[0];
+                if (!this._curve)
+                    return;
             }
             var clip = this._clip = this._curve.generateAnimationClip(5.0);
             var mixer = this._mixer = new THREE.AnimationMixer(this._previewObject);
@@ -2467,9 +2539,9 @@ var main = (function (exports) {
                     if (mesh instanceof THREE.Mesh) {
                         if (mesh.material && mesh.material instanceof THREE.Material)
                             mesh.material.dispose();
-                        var texture = new THREE['TGALoader']().load('res/gzy.tga', t => {
+                        var texture = new THREE.TextureLoader().load('res/gzy.jpg', t => {
                             console.log('load ok');
-                        }, null, e => {
+                        }, undefined, e => {
                             console.log('load error,', e);
                         });
                         mesh.material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: false, map: texture });
@@ -2904,6 +2976,37 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=TranslationGhostCurveEditor.js.map
 
+    var __rest = (window && window.__rest) || function (s, e) {
+        var t = {};
+        for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+            t[p] = s[p];
+        if (s != null && typeof Object.getOwnPropertySymbols === "function")
+            for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) if (e.indexOf(p[i]) < 0)
+                t[p[i]] = s[p[i]];
+        return t;
+    };
+    class IndeterminateCheckbox extends React.Component {
+        componentDidMount() {
+            if (this.props.indeterminate === true) {
+                this._setIndeterminate(true);
+            }
+        }
+        componentDidUpdate(previousProps) {
+            if (previousProps.indeterminate !== this.props.indeterminate) {
+                this._setIndeterminate(this.props.indeterminate);
+            }
+        }
+        _setIndeterminate(indeterminate) {
+            const node = ReactDOM.findDOMNode(this);
+            node.indeterminate = indeterminate;
+        }
+        render() {
+            const _a = this.props, props = __rest(_a, ["indeterminate", "type"]);
+            return React.createElement("input", Object.assign({ type: "checkbox" }, props));
+        }
+    }
+    //# sourceMappingURL=IndeterminateCheckbox.js.map
+
     class CurveEditor extends React.Component {
         constructor(props) {
             super(props);
@@ -2915,22 +3018,24 @@ var main = (function (exports) {
                     app.recordAddCurve(curve);
                 }
                 var css = {
-                    width: '100%'
+                    width: '47%'
                 };
-                return React.createElement("button", { style: css, onClick: onClick },
-                    "\u521B\u5EFA",
-                    props.type);
+                return React.createElement(React.Fragment, null,
+                    React.createElement("button", { style: css, onClick: onClick }, props.name));
             }
+            var css_round_box = {
+                borderRadius: '5px',
+                border: '1px solid white',
+                padding: '4px 0 4px 0'
+            };
             return React.createElement("div", { className: 'CurveEditor' },
-                React.createElement("div", null,
-                    React.createElement(CreateCurveButton, { type: 'CatmullRomCurve3' }),
-                    React.createElement(CreateCurveButton, { type: 'QuadraticBezierCurve3' })),
-                React.createElement("div", null,
-                    React.createElement(CreateCurveButton, { type: 'CubicBezierCurve3' }),
-                    React.createElement(CreateCurveButton, { type: 'ArcCurve' })),
-                React.createElement("div", null,
-                    React.createElement(CreateCurveButton, { type: 'TranslationGhostCurve' })),
-                React.createElement("hr", null),
+                React.createElement("div", { style: css_round_box },
+                    React.createElement("div", { style: { textAlign: 'center', borderBottom: '1px solid white', margin: '0' } }, "\u521B\u5EFA\u66F2\u7EBF"),
+                    React.createElement(CreateCurveButton, { type: 'CatmullRomCurve3', name: '\u81EA\u52A8\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'QuadraticBezierCurve3', name: '\u4E8C\u6B21\u8D1D\u585E\u5C14\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'CubicBezierCurve3', name: '\u4E09\u6B21\u8D1D\u585E\u5C14\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'ArcCurve', name: '\u87BA\u65CB\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'TranslationGhostCurve', name: '\u591A\u91CD\u5206\u8EAB\u66F2\u7EBF' })),
                 React.createElement(CurveCommonEditor, null),
                 React.createElement("hr", null),
                 React.createElement(ArcCurveEditor, null),
@@ -2954,7 +3059,15 @@ var main = (function (exports) {
             };
             return React.createElement("button", { style: css, onClick: onClick, disabled: disabled }, "\u5220\u9664\u5F53\u524D\u66F2\u7EBF");
         }
-        return React.createElement(React.Fragment, null,
+        var curves = app.selection.selectionCurves;
+        var allVisible = curves.every(x => x.visible);
+        var allHidden = curves.every(x => !x.visible);
+        function onVisibleChange(e) {
+            app.selection.selectionCurves.forEach(c => {
+                c.visible = !!e.target.checked;
+            });
+        }
+        return React.createElement("div", null,
             React.createElement("div", null,
                 React.createElement(CurveList, null)),
             React.createElement("div", { style: { overflow: 'hidden', whiteSpace: 'nowrap' } },
@@ -2971,7 +3084,10 @@ var main = (function (exports) {
                 ParameterBox('generateQuality', 1)),
             React.createElement("div", null,
                 "\u66F2\u7EBF\u989C\u8272\uFF1A",
-                React.createElement(CurveColorInput, null)));
+                React.createElement(CurveColorInput, null)),
+            React.createElement("div", null,
+                "\u663E\u793A\u66F2\u7EBF\uFF1A",
+                React.createElement(IndeterminateCheckbox, { disabled: curves.length === 0, indeterminate: !allHidden && !allVisible, checked: allVisible, onChange: onVisibleChange })));
     }
     function CurveList() {
         var sel = app.selection.onlyOneSelectedCurve;
@@ -3101,6 +3217,35 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=CurveEditor.js.map
 
+    class AnimationEditor extends React.Component {
+        constructor(props) {
+            super(props);
+            this.state = {};
+        }
+        render() {
+            var self = this;
+            var playbutton;
+            var control = app.animationPreviewControl;
+            if (control.isPlaying) {
+                playbutton = React.createElement("button", { onClick: e => { control.stop(); this.setState({}); } }, "\u505C\u6B62");
+            }
+            else {
+                playbutton = React.createElement("button", { onClick: e => { control.play(); this.setState({}); } }, "\u64AD\u653E");
+            }
+            function onTimeScaleChange(e) {
+                control.timeScale = e.target.value;
+                self.setState({});
+            }
+            return React.createElement(React.Fragment, null,
+                React.createElement("div", null, playbutton),
+                React.createElement("div", null,
+                    "\u64AD\u653E\u901F\u5EA6\uFF1A",
+                    React.createElement("input", { style: { width: '100px', verticalAlign: 'middle' }, type: 'range', min: 0, max: 5, step: 0.1, value: control.timeScale, onChange: onTimeScaleChange }),
+                    control.timeScale));
+        }
+    }
+    //# sourceMappingURL=AnimationEditor.js.map
+
     class Panel extends React.Component {
         constructor(props) {
             super(props);
@@ -3138,7 +3283,9 @@ var main = (function (exports) {
                 React.createElement(Panel, { title: 'point editor' },
                     React.createElement(ControlPointEditor, null)),
                 React.createElement(Panel, { title: 'curve editor' },
-                    React.createElement(CurveEditor, null)));
+                    React.createElement(CurveEditor, null)),
+                React.createElement(Panel, { title: '\u52A8\u753B' },
+                    React.createElement(AnimationEditor, null)));
         }
     }
     var appRef = React.createRef();
@@ -3207,7 +3354,7 @@ var main = (function (exports) {
             this.curves = [];
             this.controlPoints = [];
             this.controlPointObjects = [];
-            this.rootGui = new dat.GUI();
+            //rootGui: dat.GUI = new dat.GUI();
             this.clock = new THREE.Clock(true);
             this._deltaTime = 0;
             this._records = [];
@@ -3255,8 +3402,8 @@ var main = (function (exports) {
         get domElement() { return this.renderer.domElement; }
         get deltaTime() { return this._deltaTime; }
         initCommonUI() {
-            var ui = this.rootGui.addFolder('common');
-            ui.add(this, 'resetCamera').name('Reset camera');
+            //var ui = this.rootGui.addFolder('common');
+            //ui.add(this, 'resetCamera').name('Reset camera');
         }
         initScene() {
             this.scene.background = new THREE.Color(0);

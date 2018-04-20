@@ -12,8 +12,13 @@ canvas {
     position: absolute;
     top: 0;
     left: 0;
-	width: 230px;
-	font-size: 12px;
+    width: 230px;
+    font-size: 12px;
+
+    display: block;
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100vh;
 }
 
 .ControlPointEditor {}
@@ -35,9 +40,8 @@ canvas {
     margin: 4px;
 }
 
-.CurveEditor
-{
-	font-size:12px;
+.CurveEditor {
+    font-size: 12px;
 }
 
 .panel {
@@ -81,8 +85,8 @@ button:active:enabled {
     cursor: pointer;
     user-select: none;
     -moz-user-select: -moz-none;
-	-webkit-user-select: none;
-	font-size: 15px;
+    -webkit-user-select: none;
+    font-size: 15px;
 }
 
 .panel .content {
@@ -132,4 +136,17 @@ button:active:enabled {
 .panel input:focus {
     border: 1px solid rgba(255, 255, 255, 0.9);
     transition: all 0.2s
+}
+
+.twocolumn_grid {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+}
+
+.column1 {
+    grid-column: 1;
+}
+
+.column2 {
+    grid-column: 2
 }
