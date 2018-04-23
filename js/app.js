@@ -949,6 +949,7 @@ var main = (function (exports) {
             return arr;
         }
     }
+    //# sourceMappingURL=CubicBezierCurve3.js.map
 
     //控制形态的点的数量
     const FIX_POINT_COUNT = 2;
@@ -1379,8 +1380,42 @@ var main = (function (exports) {
                         return this.setBox(op);
                     }
                 }
+                else if (op.kind === 'circle') {
+                    if (op.up && op.right && op.radius && op.count) {
+                        return this.setCirlce(op);
+                    }
+                }
             }
             return false;
+        }
+        setCirlce(obj) {
+            var up = new THREE.Vector3(obj.up.x, obj.up.y, obj.up.z);
+            var right = new THREE.Vector3(obj.right.x, obj.right.y, obj.right.z);
+            var radius = obj.radius || 0.1;
+            var count = Math.floor(obj.count) || 2;
+            if (count < 2)
+                count = 2;
+            up.normalize();
+            right.normalize();
+            var angle_step = Math.PI * 2 / count;
+            var translations = [];
+            var xtemp = new THREE.Vector3();
+            var ytemp = new THREE.Vector3();
+            for (var i = 0; i < count; ++i) {
+                var angle = i * angle_step;
+                var y = radius * Math.cos(angle);
+                var x = radius * Math.sin(angle);
+                xtemp.copy(right);
+                xtemp.multiplyScalar(x);
+                ytemp.copy(up);
+                ytemp.multiplyScalar(y);
+                var t = new THREE.Vector3();
+                t.addVectors(xtemp, ytemp);
+                translations.push(t);
+            }
+            this._translations = translations;
+            this._cacheGenerate = null;
+            return true;
         }
         setBox(obj) {
             var up = new THREE.Vector3(obj.up.x, obj.up.y, obj.up.z);
@@ -1411,7 +1446,6 @@ var main = (function (exports) {
             return true;
         }
     }
-    //# sourceMappingURL=TranslationGhostCurve.js.map
 
     function createCurve(type, initJsonObject) {
         if (type === 'CatmullRomCurve3') {
@@ -1465,13 +1499,15 @@ var main = (function (exports) {
             });
             this.line = new THREE.Line(this.geometry, [this.material]);
             this.line.renderOrder = 20;
+            this.line.matrixAutoUpdate = false;
+            this.line.frustumCulled = false;
             var helpLineBuffer = new THREE.BufferGeometry();
             var helpLineMaterial = new THREE.LineDashedMaterial({
                 color: 0xffff00,
                 depthTest: true,
                 depthWrite: true,
                 depthFunc: THREE.AlwaysDepth,
-                gapSize: 10,
+                gapSize: 5,
                 dashSize: 10,
                 scale: 1
             });
@@ -2865,7 +2901,12 @@ var main = (function (exports) {
             right: { x: 0, y: 0, z: -1 },
         },
         'circle': {
-            _name: '圆'
+            _name: '圆',
+            kind: 'circle',
+            radius: 100,
+            count: 20,
+            up: { x: 0, y: 1, z: 0 },
+            right: { x: 0, y: 0, z: -1 },
         }
     };
     class TranslationGhostCurveEditor extends React.Component {
@@ -2921,14 +2962,14 @@ var main = (function (exports) {
                 var onKindChange = e => {
                     this.setState({ form: e.target.value });
                 };
+                function getOnChangeValueFunc(key) {
+                    return function (val) {
+                        form[key] = val;
+                        self.setState({});
+                    };
+                }
                 var self = this;
                 var BoxForm = function () {
-                    function getOnChangeValue(key) {
-                        return function (val) {
-                            form[key] = val;
-                            self.setState({});
-                        };
-                    }
                     function onClick(e) {
                         var op = {
                             type: 'setFormulation',
@@ -2947,22 +2988,49 @@ var main = (function (exports) {
                     return React.createElement(React.Fragment, null,
                         React.createElement("div", null,
                             "\u5BBD\u5EA6\uFF1A",
-                            React.createElement(NumberBox, { style: css, min: 10, max: 1000, step: 1, onChangeValue: getOnChangeValue('width'), value: form.width })),
+                            React.createElement(NumberBox, { style: css, min: 10, max: 1000, step: 1, onChangeValue: getOnChangeValueFunc('width'), value: form.width })),
                         React.createElement("div", null,
                             "\u9AD8\u5EA6\uFF1A",
-                            React.createElement(NumberBox, { style: css, min: 10, max: 1000, step: 1, onChangeValue: getOnChangeValue('height'), value: form.height })),
+                            React.createElement(NumberBox, { style: css, min: 10, max: 1000, step: 1, onChangeValue: getOnChangeValueFunc('height'), value: form.height })),
                         React.createElement("div", null,
                             "\u6A2A\u5411\u4E2A\u6570\uFF1A",
-                            React.createElement(NumberBox, { style: css, min: 1, max: 20, step: 1, onChangeValue: getOnChangeValue('xcount'), value: form.xcount })),
+                            React.createElement(NumberBox, { style: css, min: 1, max: 20, step: 1, onChangeValue: getOnChangeValueFunc('xcount'), value: form.xcount })),
                         React.createElement("div", null,
                             "\u7EB5\u5411\u4E2A\u6570\uFF1A",
-                            React.createElement(NumberBox, { style: css, min: 1, max: 20, step: 1, onChangeValue: getOnChangeValue('ycount'), value: form.ycount })),
+                            React.createElement(NumberBox, { style: css, min: 1, max: 20, step: 1, onChangeValue: getOnChangeValueFunc('ycount'), value: form.ycount })),
+                        React.createElement("div", null,
+                            React.createElement("button", { onClick: onClick }, "\u8BBE\u7F6E")));
+                };
+                var CircleForm = function () {
+                    var css = { width: '120px' };
+                    function onClick(e) {
+                        var op = {
+                            type: 'setFormulation',
+                            kind: 'circle',
+                            radius: form.radius || 0.1,
+                            count: Math.floor(form.count) || 2,
+                            up: form.up,
+                            right: form.right
+                        };
+                        if (curve)
+                            curve.applyOperator(op);
+                    }
+                    return React.createElement(React.Fragment, null,
+                        React.createElement("div", null,
+                            "\u534A\u5F84\uFF1A",
+                            React.createElement(NumberBox, { style: css, min: 0.1, max: 1000, step: 1, onChangeValue: getOnChangeValueFunc('radius'), value: form.radius })),
+                        React.createElement("div", null,
+                            "\u6570\u91CF\uFF1A",
+                            React.createElement(NumberBox, { style: css, min: 2, max: 50, step: 1, onChangeValue: getOnChangeValueFunc('count'), value: form.count })),
                         React.createElement("div", null,
                             React.createElement("button", { onClick: onClick }, "\u8BBE\u7F6E")));
                 };
                 var CurrentForm = null;
                 if (form.kind === 'box') {
                     CurrentForm = BoxForm();
+                }
+                else if (form.kind === 'circle') {
+                    CurrentForm = CircleForm();
                 }
                 return React.createElement("div", { style: panelcss },
                     React.createElement("div", { style: { color: 'white', textAlign: 'center' } }, "\u9635\u578B\u8BBE\u7F6E"),
@@ -3447,9 +3515,13 @@ var main = (function (exports) {
                         this.selection.toggle(obj);
                     }
                     else {
-                        this.selection.clear();
-                        this.selection.add(obj);
-                        this.selection.tryTriggerDrag(me);
+                        //如果obj是selections中最后一个的话，可能是的点在了 drag gizmos上。
+                        //那样，如果执行了下面的代码的话，就会清空选择了。
+                        if (obj !== this.selection.selections[this.selection.selections.length - 1]) {
+                            this.selection.clear();
+                            this.selection.add(obj);
+                            this.selection.tryTriggerDrag(me);
+                        }
                     }
                 }
             });
@@ -3710,3 +3782,4 @@ var main = (function (exports) {
     return exports;
 
 }({}));
+//# sourceMappingURL=app.js.map
