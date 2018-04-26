@@ -27,7 +27,7 @@ var main = (function (exports) {
             var box = this._box = new THREE.Mesh(geom, mat);
             box.position.copy(this.point);
             const ARROW_SCALE = 0.2 * SCALE;
-            box.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1 * ARROW_SCALE, 0, 0), 2 * ARROW_SCALE, 0xff0000, 0.1, 0.05), new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0 * ARROW_SCALE, 0), 1.5 * ARROW_SCALE, 0x00ff00, 0.3 * ARROW_SCALE, 0.18 * ARROW_SCALE), new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1 * ARROW_SCALE), 2 * ARROW_SCALE, 0x0000ff, 0.1, 0.05));
+            box.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1 * ARROW_SCALE, 0, 0), 2 * ARROW_SCALE, 0xff0000, 0.3 * ARROW_SCALE, 0.18 * ARROW_SCALE), new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0 * ARROW_SCALE, 0), 1.5 * ARROW_SCALE, 0x00ff00, 0.3 * ARROW_SCALE, 0.18 * ARROW_SCALE), new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1 * ARROW_SCALE), 3 * ARROW_SCALE, 0x0000ff, 0.5 * ARROW_SCALE, 0.18 * ARROW_SCALE));
             {
                 var geom2 = new THREE.BoxBufferGeometry(0.1 * SCALE, 0.1 * SCALE, 0.5 * SCALE);
                 var mat2 = new THREE.MeshLambertMaterial({ color: 0xff0000 });
@@ -196,19 +196,27 @@ var main = (function (exports) {
     }
     const Z_AXIS = new THREE.Vector3(0, 0, 1);
     const TEMP_Q = new THREE.Quaternion;
+    const ZERO = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    var ROT_MAT = new THREE.Matrix4();
     function calcQuaternion(previousQuaternion, previousTarget, previousRotation, quaternion, forward, rotation) {
-        if (!previousQuaternion) {
-            quaternion.setFromUnitVectors(Z_AXIS, forward);
-            var q1 = TEMP_Q;
-            q1.setFromAxisAngle(Z_AXIS, rotation / 180 * Math.PI);
-            quaternion.multiply(q1);
-        }
-        else {
-            quaternion.copy(previousQuaternion);
-            TEMP_Q.setFromUnitVectors(previousTarget, forward);
-            quaternion.premultiply(TEMP_Q);
-            TEMP_Q.setFromAxisAngle(Z_AXIS, (rotation - previousRotation) / 180 * Math.PI);
-            quaternion.multiply(TEMP_Q);
+        var q1;
+
+{
+            if (!previousQuaternion) {
+                ROT_MAT.lookAt(forward, ZERO, UP);
+                quaternion.setFromRotationMatrix(ROT_MAT);
+                var q1 = TEMP_Q;
+                q1.setFromAxisAngle(Z_AXIS, rotation / 180 * Math.PI);
+                quaternion.multiply(q1);
+            }
+            else {
+                quaternion.copy(previousQuaternion);
+                TEMP_Q.setFromUnitVectors(previousTarget, forward);
+                quaternion.premultiply(TEMP_Q);
+                TEMP_Q.setFromAxisAngle(Z_AXIS, (rotation - previousRotation) / 180 * Math.PI);
+                quaternion.multiply(TEMP_Q);
+            }
         }
     }
     function generateQuaternion(result) {
@@ -325,8 +333,25 @@ var main = (function (exports) {
             this._curve.updateArcLengths();
         }
         supportedOperator() { return []; }
-        allowOperator(op) { return false; }
-        applyOperator(op) { return false; }
+        allowOperator(op) {
+            if (op.type === 'mirrorX')
+                return true;
+            return false;
+        }
+        applyOperator(op) {
+            if (op.type === 'mirrorX') {
+                for (var i = 0; i < this._positions.length; ++i) {
+                    this._positions[i].x = -this._positions[i].x;
+                    this._positions[i].y = -this._positions[i].y;
+                }
+                for (var i = 0; i < this._rotations.length; ++i) {
+                    this._rotations[i] = -this._rotations[i];
+                }
+                this._cacheGenerate = null;
+                return true;
+            }
+            return false;
+        }
         //generate helper
         generatePositions(numpoints, result) {
             result.positions = this._curve.getSpacedPoints(numpoints - 1);
@@ -478,7 +503,7 @@ var main = (function (exports) {
                             this._positions[i] = new THREE.Vector3();
                         this._positions[i].set(points[i].x || 0, points[i].y || 0, points[i].z || 0);
                     }
-                    this._curve['tension'] = obj.tension || 0.5;
+                    this._curve['tension'] = (typeof obj.tension === 'number' && obj.tension >= 0 && obj.tension <= 1) ? obj.tension : 0.5;
                     this.update();
                 }
             }
@@ -518,7 +543,7 @@ var main = (function (exports) {
                     }
                 }
             }
-            return false;
+            return super.allowOperator(op);
         }
         applyOperator(op) {
             if (op.type === 'removePoints') {
@@ -549,7 +574,7 @@ var main = (function (exports) {
                 this._cacheGenerate = null;
                 return true;
             }
-            return false;
+            return super.applyOperator(op);
         }
         setParameter(key, value) {
             if (key === 'tension') {
@@ -655,7 +680,7 @@ var main = (function (exports) {
                     return true;
                 }
             }
-            return false;
+            return super.allowOperator(op);
         }
         applyOperator(op) {
             if (!this.allowOperator(op))
@@ -716,7 +741,7 @@ var main = (function (exports) {
                     return true;
                 }
             }
-            return false;
+            return super.applyOperator(op);
         }
         getHelperLine() {
             var arr = [];
@@ -806,7 +831,7 @@ var main = (function (exports) {
             else if (op.type === 'removePoints') {
                 return this.removePoints(op.points, true);
             }
-            return false;
+            return super.allowOperator(op);
         }
         applyOperator(op) {
             if (op.type === 'splitBetween') {
@@ -815,7 +840,7 @@ var main = (function (exports) {
             else if (op.type === 'removePoints') {
                 return this.removePoints(op.points, false);
             }
-            return false;
+            return super.applyOperator(op);
         }
         //check 表示只做检查，不修改曲线
         split(points, check) {
@@ -1286,6 +1311,13 @@ var main = (function (exports) {
                 new THREE.Vector3(0, 0, 200),
                 new THREE.Vector3(0, 0, -200),
             ];
+            this.fromJSON(jsobj);
+        }
+        toJSON() {
+            return { type: this.curveType, refUUID: this._refUUID };
+        }
+        fromJSON(obj) {
+            this._refUUID = obj.refUUID || null;
         }
         allowPointRotation() { return false; }
         allowPointTranslation() { return false; }
@@ -1382,13 +1414,13 @@ var main = (function (exports) {
                 }
                 else if (op.kind === 'circle') {
                     if (op.up && op.right && op.radius && op.count) {
-                        return this.setCirlce(op);
+                        return this.setCircle(op);
                     }
                 }
             }
             return false;
         }
-        setCirlce(obj) {
+        setCircle(obj) {
             var up = new THREE.Vector3(obj.up.x, obj.up.y, obj.up.z);
             var right = new THREE.Vector3(obj.right.x, obj.right.y, obj.right.z);
             var radius = obj.radius || 0.1;
@@ -1446,6 +1478,128 @@ var main = (function (exports) {
             return true;
         }
     }
+    //# sourceMappingURL=TranslationGhostCurve.js.map
+
+    class MirrorGhostCurve extends AbstractCurve {
+        constructor(jsobj) {
+            super();
+            this.curveType = 'MirrorGhostCurve';
+            this.isGhostCurve = true;
+            this._flipRotation = true;
+            this._viewPointCount = 5;
+            this._refUUID = null;
+            this._curve = null;
+            this._cacheGenerate = null;
+            this.fromJSON(jsobj);
+        }
+        toJSON() {
+            return { type: this.curveType, refUUID: this._refUUID, viewPointCount: this._viewPointCount };
+        }
+        fromJSON(obj) {
+            this._refUUID = obj.refUUID || null;
+            if (typeof obj.viewPointCount === 'number' && obj.viewPointCount >= 2) {
+                this._viewPointCount = Math.floor(obj.viewPointCount);
+            }
+            this._curve = null;
+            this._cacheGenerate = null;
+        }
+        allowPointRotation() { return true; }
+        allowPointTranslation() { return false; }
+        getControlPointCount() {
+            var ret = this.generate();
+            if (ret) {
+                return this._viewPointCount;
+            }
+            return 1;
+        }
+        getPointPosition(i, target) {
+            var ret = this.generate();
+            if (ret && ret.positions.length > 0) {
+                var idx = Math.floor((ret.positions.length - 1) * i / (this._viewPointCount - 1));
+                target.copy(ret.positions[idx]);
+            }
+            else {
+                target.set(0, 0, 0);
+            }
+        }
+        getPointQuaternion(i, target) {
+            var ret = this.generate();
+            if (ret && ret.positions.length > 0) {
+                var idx = Math.floor((ret.positions.length - 1) * i / (this._viewPointCount - 1));
+                target.copy(ret.quaternions[idx]);
+            }
+            else {
+                target.set(0, 0, 0, 1);
+            }
+        }
+        update() {
+            super.update();
+            this._cacheGenerate = null;
+        }
+        generate(numpoints) {
+            if (this._cacheGenerate)
+                return this._cacheGenerate;
+            if (!this._curve) {
+                this._cacheGenerate = { positions: [], forwards: [], quaternions: [], rotations: [] };
+                return this._cacheGenerate;
+            }
+            var g = this._curve.generate();
+            var positions = g.positions.map(pos => {
+                return new THREE.Vector3(-pos.x, -pos.y, pos.z);
+            });
+            var forwards = g.forwards.map(dir => {
+                return new THREE.Vector3(-dir.x, -dir.y, dir.z);
+            });
+            var rotations = g.rotations.map(rot => {
+                if (this._flipRotation) {
+                    rot += 180;
+                    if (rot > 180)
+                        rot -= 360;
+                }
+                return rot;
+            });
+            this._cacheGenerate = { positions, forwards, rotations, quaternions: [] };
+            generateQuaternion(this._cacheGenerate);
+            return this._cacheGenerate;
+        }
+        getParameter(key) {
+            if (key === 'refUUID') {
+                return this._refUUID;
+            }
+            if (key === 'refCurve') {
+                return this._curve;
+            }
+            if (key === 'viewPointCount') {
+                return this._viewPointCount;
+            }
+            if (key === 'flipRotation')
+                return this._flipRotation;
+        }
+        setParameter(key, value) {
+            if (key === 'refUUID') {
+                this._refUUID = value;
+                return 'norecord'; //todo:不需要undo record
+            }
+            if (key === 'refCurve') {
+                if (value && typeof value.curveType === 'string' && typeof value.generate === 'function' && !value.isGhostCurve) {
+                    this._curve = value;
+                    this._cacheGenerate = null;
+                    return true;
+                }
+            }
+            if (key === 'viewPointCount') {
+                if (typeof value === 'number' && value >= 2 && value <= 30) {
+                    this._viewPointCount = Math.floor(value);
+                    return true;
+                }
+            }
+            if (key === 'flipRotation' && typeof value === 'boolean' && this._flipRotation !== value) {
+                this._flipRotation = !!value;
+                return true;
+            }
+        }
+    }
+    //# sourceMappingURL=MirrorGhostCurve.js.map
 
     function createCurve(type, initJsonObject) {
         if (type === 'CatmullRomCurve3') {
@@ -1462,6 +1616,9 @@ var main = (function (exports) {
         }
         else if (type === 'TranslationGhostCurve') {
             return new TranslationGhostCurve(initJsonObject);
+        }
+        else if (type === 'MirrorGhostCurve') {
+            return new MirrorGhostCurve(initJsonObject);
         }
         console.error('create curve failed', initJsonObject);
         return null;
@@ -1516,6 +1673,8 @@ var main = (function (exports) {
             this.line.add(this.helpLine);
             this._updateCurveToControlPoint();
             this._updateGeometry();
+            //call fromJSON here to set my uuid
+            this.fromJSON(initJson);
         }
         static GetSupportedCurveTypes() {
             return ['CatmullRomCurve3', 'QuadraticBezierCurve3'];
@@ -1544,12 +1703,30 @@ var main = (function (exports) {
                 if (typeof obj.uuid === 'string') {
                     this.uuid = obj.uuid;
                 }
+                else {
+                }
                 this._logicCurveChanged = true;
             }
         }
         update() {
             if (this._logicCurveChanged) {
                 this._logicCurveChanged = false;
+                //here check bind
+                var refUUID = this.curve.getParameter('refUUID');
+                if (refUUID) {
+                    var hasBind = this._curveChangeBindings.some(cc => cc.curve.uuid === refUUID);
+                    if (!hasBind) {
+                        var otherCurve = app.getCurveByUUID(refUUID);
+                        if (otherCurve) {
+                            this.clearBindingCurveChange();
+                            this.bindCurveChange(otherCurve);
+                            this.curve.setParameter('refCurve', otherCurve.curve);
+                        }
+                        else {
+                            console.warn('fail to bind curve');
+                        }
+                    }
+                }
                 this.curve.update();
                 this._updateCurveToControlPoint();
                 this._updateGeometry();
@@ -1606,10 +1783,16 @@ var main = (function (exports) {
             for (var cp of this.controlPoints)
                 cp.attachTo(app);
         }
-        generateAnimationClip(duration) {
-            if (!duration)
-                duration = 5;
+        generateAnimationClip(speed) {
+            var duration;
+            if (!(speed && speed > 0.01))
+                speed = 100;
             var genresult = this.curve.generate();
+            var totalLength = 0;
+            for (var i = 0; i < genresult.positions.length - 1; ++i) {
+                totalLength += genresult.positions[i].distanceTo(genresult.positions[i + 1]);
+            }
+            duration = totalLength >= 0.1 ? totalLength / speed : 1;
             var count = genresult.positions.length;
             var times = [];
             for (var i = 0; i < count; ++i) {
@@ -1631,6 +1814,53 @@ var main = (function (exports) {
             }
             var rotationTrack = new THREE.QuaternionKeyframeTrack('.quaternion', times, flatRot, THREE.InterpolateLinear);
             return new THREE.AnimationClip('noname', duration, [positionTrack, rotationTrack]);
+        }
+        generateBuffer(speed) {
+            var clip = this.generateAnimationClip(speed);
+            var posTrack = clip.tracks[0];
+            var rotTrack = clip.tracks[1];
+            var duration = clip.duration;
+            var timegap = 0.03;
+            var count = Math.floor(duration / timegap) + 1;
+            var buf = new ArrayBuffer(2 + (7 * 2 * count));
+            //
+            var shortView = new Int16Array(buf);
+            shortView[0] = count;
+            var posInt = posTrack.InterpolantFactoryMethodLinear(undefined);
+            var rotInt = rotTrack.InterpolantFactoryMethodLinear(undefined);
+            var floatView = new Int16Array(buf, 2);
+            var offset = 0;
+            var zero = new THREE.Vector3();
+            var q1 = new THREE.Quaternion();
+            var q2 = new THREE.Quaternion();
+            var up = new THREE.Vector3();
+            var forward = new THREE.Vector3();
+            for (var i = 0; i < count; ++i) {
+                var t = i * timegap;
+                var pos = posInt.evaluate(t);
+                var rot = rotInt.evaluate(t);
+                var rotx = rot[0], roty = rot[1], rotz = rot[2], rotw = rot[3];
+                q1.set(rotx, roty, rotz, rotw);
+                up.set(0, 1, 0);
+                forward.set(0, 0, 1);
+                up.applyQuaternion(q1);
+                forward.applyQuaternion(q1);
+                up.x = -up.x;
+                forward.x = -forward.x;
+                forward.negate();
+                var m = new THREE.Matrix4();
+                m.lookAt(zero, forward, up);
+                q1.setFromRotationMatrix(m);
+                floatView[offset++] = q1.x * 32768;
+                floatView[offset++] = q1.y * 32768;
+                floatView[offset++] = q1.z * 32768;
+                floatView[offset++] = q1.w * 32768;
+                floatView[offset++] = -pos[0] / 13107.2 * 32768;
+                floatView[offset++] = pos[1] / 13107.2 * 32768;
+                floatView[offset++] = pos[2] / 13107.2 * 32768;
+            }
+            //(new Uint8Array(buf)).set(floatView, 2);
+            return buf;
         }
         _updateGeometry() {
             var geometry = this.geometry;
@@ -2477,6 +2707,7 @@ var main = (function (exports) {
             this._playing = false;
             this._timeScale = 1;
             this._curveDirty = false;
+            this._motionSpeed = 100; //用来生成动画的运动速度
             this._createPreviewObject();
             this._previewObject.visible = this._enable;
             //var gui = app.rootGui.addFolder('Animation');
@@ -2491,6 +2722,15 @@ var main = (function (exports) {
         }
         get timeScale() { return this._timeScale; }
         set timeScale(val) { this._timeScale = val; }
+        get motionSpeed() { return this._motionSpeed; }
+        set motionSpeed(val) {
+            if (typeof val === 'number' && val >= 0.1 && val !== this._motionSpeed) {
+                this._motionSpeed = val;
+                if (this.enable) {
+                    this._updateCurveAnimation();
+                }
+            }
+        }
         play(curve) {
             if (!this._playing || !this.enable) {
                 this._curve = curve;
@@ -2525,7 +2765,7 @@ var main = (function (exports) {
                 if (!this._curve)
                     return;
             }
-            var clip = this._clip = this._curve.generateAnimationClip(5.0);
+            var clip = this._clip = this._curve.generateAnimationClip(this._motionSpeed);
             var mixer = this._mixer = new THREE.AnimationMixer(this._previewObject);
             var action = this._action = mixer.clipAction(clip);
             if (this._playing)
@@ -2624,8 +2864,8 @@ var main = (function (exports) {
             super(props);
             this.isCancel = false;
             this.isDraging = false;
-            this.min = Number.MIN_VALUE;
-            this.max = Number.MAX_VALUE;
+            this.min = Number.NEGATIVE_INFINITY;
+            this.max = Number.POSITIVE_INFINITY;
             this.state = { focus: false, draging: false, input: null };
             if (typeof props.min === 'number')
                 this.min = props.min;
@@ -2641,12 +2881,12 @@ var main = (function (exports) {
             }
         }
         onChange(e) {
-            var value = parseFloat(e.target.value);
-            if (e.target.value === '')
-                value = 0;
-            if (isNaN(value)) {
-                return;
-            }
+            // var value = parseFloat(e.target.value);
+            // if (e.target.value === '') value = 0;
+            // if (isNaN(value))
+            // {
+            // 	return;
+            // }
             if (this.state.focus && !this.state.draging) {
                 this.setState({ input: e.target.value });
             }
@@ -2934,13 +3174,16 @@ var main = (function (exports) {
                 if (!other || other.curve.isGhostCurve)
                     return null;
                 function bind() {
-                    if (one.setParameter('refCurve', other.curve)) {
-                        one.clearBindingCurveChange();
-                        one.bindCurveChange(other);
-                    }
-                    else {
-                        console.error('bind error??');
-                    }
+                    // if (one.setParameter('refCurve', other.curve))
+                    // {
+                    // 	one.clearBindingCurveChange();
+                    // 	one.bindCurveChange(other);
+                    // }
+                    // else
+                    // {
+                    // 	console.error('bind error??');
+                    // }
+                    one.setParameter('refUUID', other.uuid);
                 }
                 return React.createElement("div", null,
                     React.createElement("button", { onClick: bind }, "\u7ED1\u5B9A"));
@@ -3075,6 +3318,66 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=IndeterminateCheckbox.js.map
 
+    const MY_CURVE_TYPE = 'MirrorGhostCurve';
+    class MirrorGhostCurveEditor extends React.Component {
+        constructor(props) {
+            super(props);
+        }
+        render() {
+            function BindButton(props) {
+                //var NullButton = <button disabled={true}>绑定</button>;
+                var sels = app.selection.selectionCurves;
+                if (sels.length === 1) {
+                    if (sels[0].curve.curveType === MY_CURVE_TYPE &&
+                        !sels[0].curve.getParameter('refCurve')) {
+                        return React.createElement("div", { style: { color: 'red' } }, "\u8BF7\u540C\u65F6\u9009\u62E9\u53E6\u4E00\u6761\u66F2\u7EBF\u8FDB\u884C\u7ED1\u5B9A");
+                    }
+                }
+                if (sels.length != 2)
+                    return null;
+                var [one, other] = sels;
+                if (!one || one.curve.curveType !== MY_CURVE_TYPE)
+                    [one, other] = [other, one];
+                if (!one || one.curve.curveType != MY_CURVE_TYPE)
+                    return null;
+                if (!other || other.curve.isGhostCurve)
+                    return null;
+                function bind() {
+                    // if (one.setParameter('refCurve', other.curve))
+                    // {
+                    // 	one.clearBindingCurveChange();
+                    // 	one.bindCurveChange(other);
+                    // }
+                    // else
+                    // {
+                    // 	console.error('bind error??');
+                    // }
+                    one.setParameter('refUUID', other.uuid);
+                }
+                return React.createElement("div", null,
+                    React.createElement("button", { onClick: bind }, "\u7ED1\u5B9A"));
+            }
+            function FlipToggle() {
+                var curve = app.selection.onlyOneSelectedCurve;
+                if (curve && curve.curve.curveType === MY_CURVE_TYPE) {
+                    var key = 'flipRotation';
+                    var value = curve.getParameter(key);
+                    function onChange(e) {
+                        curve && curve.setParameter(key, e.target.checked);
+                    }
+                    return React.createElement("div", null,
+                        "\u7FFB\u8F6C\u80CC\u90E8\u671D\u5411\uFF1A",
+                        React.createElement(IndeterminateCheckbox, { checked: value, onChange: onChange }));
+                }
+                return null;
+            }
+            return React.createElement(React.Fragment, null,
+                React.createElement(FlipToggle, null),
+                React.createElement(BindButton, null));
+        }
+    }
+    //# sourceMappingURL=MirrorGhostCurveEditor.js.map
+
     class CurveEditor extends React.Component {
         constructor(props) {
             super(props);
@@ -3103,12 +3406,14 @@ var main = (function (exports) {
                     React.createElement(CreateCurveButton, { type: 'QuadraticBezierCurve3', name: '\u4E8C\u6B21\u8D1D\u585E\u5C14\u66F2\u7EBF' }),
                     React.createElement(CreateCurveButton, { type: 'CubicBezierCurve3', name: '\u4E09\u6B21\u8D1D\u585E\u5C14\u66F2\u7EBF' }),
                     React.createElement(CreateCurveButton, { type: 'ArcCurve', name: '\u87BA\u65CB\u66F2\u7EBF' }),
-                    React.createElement(CreateCurveButton, { type: 'TranslationGhostCurve', name: '\u591A\u91CD\u5206\u8EAB\u66F2\u7EBF' })),
+                    React.createElement(CreateCurveButton, { type: 'TranslationGhostCurve', name: '\u591A\u91CD\u5206\u8EAB\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'MirrorGhostCurve', name: '\u955C\u50CF\u66F2\u7EBF' })),
                 React.createElement(CurveCommonEditor, null),
                 React.createElement("hr", null),
                 React.createElement(ArcCurveEditor, null),
                 React.createElement(CatmullRomCurve3Editor, null),
-                React.createElement(TranslationGhostCurveEditor, null));
+                React.createElement(TranslationGhostCurveEditor, null),
+                React.createElement(MirrorGhostCurveEditor, null));
         }
     }
     function CurveCommonEditor() {
@@ -3135,6 +3440,19 @@ var main = (function (exports) {
                 c.visible = !!e.target.checked;
             });
         }
+        function MirrorButton() {
+            function onClick() {
+                var curve = app.selection.onlyOneSelectedCurve;
+                if (curve) {
+                    curve.applyOperator({ type: 'mirrorX' });
+                }
+            }
+            function isEnable() {
+                var curve = app.selection.onlyOneSelectedCurve;
+                return curve && curve.allowOperator({ type: 'mirrorX' });
+            }
+            return React.createElement("button", { onClick: onClick, disabled: !isEnable() }, "X\u955C\u50CF");
+        }
         return React.createElement("div", null,
             React.createElement("div", null,
                 React.createElement(CurveList, null)),
@@ -3147,6 +3465,8 @@ var main = (function (exports) {
             React.createElement("div", null,
                 React.createElement(SelectAllButton, null),
                 React.createElement(RemoveCurveButton, null)),
+            React.createElement("div", null,
+                React.createElement(MirrorButton, null)),
             React.createElement("div", null,
                 "\u751F\u6210\u8D28\u91CF\uFF1A",
                 ParameterBox('generateQuality', 1)),
@@ -3304,15 +3624,43 @@ var main = (function (exports) {
                 control.timeScale = e.target.value;
                 self.setState({});
             }
+            function onClickExport(e) {
+                var curve = app.selection.onlyOneSelectedCurve;
+                if (curve) {
+                    var buffer = curve.generateBuffer(control.motionSpeed);
+                    var blob = new Blob([buffer]);
+                    var url = window.URL.createObjectURL(blob);
+                    var elem = document.createElement('a');
+                    elem.href = url;
+                    elem.download = 'Animation88.anim3';
+                    elem.style.display = 'none';
+                    document.body.appendChild(elem);
+                    elem.click();
+                    window.setTimeout(() => {
+                        document.body.removeChild(elem);
+                        window.URL.revokeObjectURL(url);
+                    }, 60 * 1000);
+                }
+            }
+            function onChangeMotionSpeed(value) {
+                control.motionSpeed = value;
+                self.setState({});
+            }
             return React.createElement(React.Fragment, null,
-                React.createElement("div", null, playbutton),
+                React.createElement("div", null,
+                    playbutton,
+                    React.createElement("button", { onClick: onClickExport, disabled: !app.selection.onlyOneSelectedCurve }, "\u5BFC\u51FA")),
+                React.createElement("div", null,
+                    React.createElement("button", { onClick: () => app.changeToGameView() }, "\u6E38\u620F\u89C6\u56FE")),
+                React.createElement("div", null,
+                    "\u8FD0\u52A8\u901F\u5EA6\uFF1A",
+                    React.createElement(NumberBox, { min: 0, max: 2000, step: 1, value: control.motionSpeed, onChangeValue: onChangeMotionSpeed })),
                 React.createElement("div", null,
                     "\u64AD\u653E\u901F\u5EA6\uFF1A",
                     React.createElement("input", { style: { width: '100px', verticalAlign: 'middle' }, type: 'range', min: 0, max: 5, step: 0.1, value: control.timeScale, onChange: onTimeScaleChange }),
                     control.timeScale));
         }
     }
-    //# sourceMappingURL=AnimationEditor.js.map
 
     class Panel extends React.Component {
         constructor(props) {
@@ -3624,6 +3972,9 @@ var main = (function (exports) {
             curve.addEventListener('change', e => this.onCurveChange(e));
             this.getUI().refreshSelectionControlPoints();
         }
+        changeToGameView() {
+            this.startCameraMoving();
+        }
         startCameraMoving() {
             this._cameraStartPosition = this.camera.position.clone();
             this._cameraStartRotation = this.camera.quaternion.clone();
@@ -3764,6 +4115,14 @@ var main = (function (exports) {
                     return c;
             }
             return null;
+        }
+        getPreviewQ() {
+            var q = this.animationPreviewControl['_previewObject'].quaternion.clone();
+            var up = new THREE.Vector3(0, 1, 0);
+            up.applyQuaternion(q);
+            var q2 = new THREE.Quaternion();
+            q2.setFromAxisAngle(up, Math.PI);
+            return q.premultiply(q2);
         }
     }
     //# sourceMappingURL=Application.js.map
