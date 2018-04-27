@@ -1634,6 +1634,7 @@ var main = (function (exports) {
             this.disposed = false;
             this.dirtyForAnimation = false;
             this.dirtyForSelection = false;
+            this._motionSpeed = 200;
             //logic curve data changed.
             //need to update geometry and ControlPoint;
             this._logicCurveChanged = true;
@@ -1694,6 +1695,7 @@ var main = (function (exports) {
         toJSON() {
             var obj = this.curve.toJSON();
             obj.uuid = this.uuid;
+            obj.motionSpeed = this._motionSpeed;
             return obj;
         }
         fromJSON(obj) {
@@ -1705,7 +1707,18 @@ var main = (function (exports) {
                 }
                 else {
                 }
+                if (typeof obj.motionSpeed === 'number' && obj.motionSpeed >= 0.01) {
+                    this._motionSpeed = obj.motionSpeed;
+                }
                 this._logicCurveChanged = true;
+            }
+        }
+        get motionSpeed() { return this._motionSpeed; }
+        set motionSpeed(val) {
+            if (typeof val === 'number' && val >= 0.01) {
+                this._motionSpeed = val;
+                this.dirtyForAnimation = true;
+                //this._logicCurveChanged = true;
             }
         }
         update() {
@@ -1784,6 +1797,8 @@ var main = (function (exports) {
                 cp.attachTo(app);
         }
         generateAnimationClip(speed) {
+            if (!speed)
+                speed = this._motionSpeed;
             var duration;
             if (!(speed && speed > 0.01))
                 speed = 100;
@@ -1816,6 +1831,8 @@ var main = (function (exports) {
             return new THREE.AnimationClip('noname', duration, [positionTrack, rotationTrack]);
         }
         generateBuffer(speed) {
+            if (!speed)
+                speed = this._motionSpeed;
             var clip = this.generateAnimationClip(speed);
             var posTrack = clip.tracks[0];
             var rotTrack = clip.tracks[1];
@@ -1950,6 +1967,10 @@ var main = (function (exports) {
             return ret;
         }
         setParameter(key, value) {
+            if (key === 'motionSpeed') {
+                this.motionSpeed = value;
+                return true;
+            }
             var ret = this.curve.setParameter(key, value);
             if (ret) {
                 this._logicCurveChanged = true;
@@ -1958,7 +1979,11 @@ var main = (function (exports) {
             }
             return ret;
         }
-        getParameter(key) { return this.curve.getParameter(key); }
+        getParameter(key) {
+            if (key === 'motionSpeed')
+                return this._motionSpeed;
+            return this.curve.getParameter(key);
+        }
         //绑定一个曲线。
         bindCurveChange(curve) {
             if (curve === this) {
@@ -2228,7 +2253,8 @@ var main = (function (exports) {
             this.gridPlane = new THREE.GridHelper(10, 30, new THREE.Color('blue'), new THREE.Color('lightblue'));
             this.scene.add(this.gridPlane);
             this.gridPlane.visible = false;
-            this.gridPlane.material.opacity = 0.2;
+            this.gridPlane.material.transparent = true;
+            this.gridPlane.material.opacity = 0.4;
             this.setPlane('Z');
             this.setScale(50.0);
             this.updateGizmos();
@@ -2707,7 +2733,6 @@ var main = (function (exports) {
             this._playing = false;
             this._timeScale = 1;
             this._curveDirty = false;
-            this._motionSpeed = 100; //用来生成动画的运动速度
             this._createPreviewObject();
             this._previewObject.visible = this._enable;
             //var gui = app.rootGui.addFolder('Animation');
@@ -2722,15 +2747,6 @@ var main = (function (exports) {
         }
         get timeScale() { return this._timeScale; }
         set timeScale(val) { this._timeScale = val; }
-        get motionSpeed() { return this._motionSpeed; }
-        set motionSpeed(val) {
-            if (typeof val === 'number' && val >= 0.1 && val !== this._motionSpeed) {
-                this._motionSpeed = val;
-                if (this.enable) {
-                    this._updateCurveAnimation();
-                }
-            }
-        }
         play(curve) {
             if (!this._playing || !this.enable) {
                 this._curve = curve;
@@ -2765,7 +2781,7 @@ var main = (function (exports) {
                 if (!this._curve)
                     return;
             }
-            var clip = this._clip = this._curve.generateAnimationClip(this._motionSpeed);
+            var clip = this._clip = this._curve.generateAnimationClip();
             var mixer = this._mixer = new THREE.AnimationMixer(this._previewObject);
             var action = this._action = mixer.clipAction(clip);
             if (this._playing)
@@ -2875,6 +2891,7 @@ var main = (function (exports) {
         componentDidMount() {
         }
         componentWillUnmount() {
+            console.log('numberbox unmount');
             if (this.dispose) {
                 this.dispose();
                 this.dispose = null;
@@ -2908,6 +2925,9 @@ var main = (function (exports) {
             }
             function onMouseMove(e) {
                 var delta = lastY - e.screenY;
+                //console.log('move delta', delta);
+                //e.preventDefault();
+                //e.stopPropagation();
                 var xdelta = Math.abs(e.screenX - startX);
                 if (firstDelta) {
                     if (Math.abs(delta) > 20 && xdelta < Math.abs(delta)) {
@@ -2936,13 +2956,15 @@ var main = (function (exports) {
                     }
                 }
             }
-            window.addEventListener('mouseup', onMouseUp);
-            window.addEventListener('mousemove', onMouseMove);
+            //console.log('down start')
+            const capture = false;
+            window.addEventListener('mouseup', onMouseUp, capture);
+            window.addEventListener('mousemove', onMouseMove, capture);
             this.isDraging = true;
             this.setState({ draging: true });
             this.dispose = function () {
-                window.removeEventListener('mouseup', onMouseUp);
-                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp, capture);
+                window.removeEventListener('mousemove', onMouseMove, capture);
                 this.isDraging = false;
                 document.exitPointerLock();
                 this.setState({ draging: false });
@@ -3381,6 +3403,10 @@ var main = (function (exports) {
     class CurveEditor extends React.Component {
         constructor(props) {
             super(props);
+            this.state = {};
+        }
+        componentWillUnmount() {
+            console.log('will unmount');
         }
         render() {
             function CreateCurveButton(props) {
@@ -3453,6 +3479,18 @@ var main = (function (exports) {
             }
             return React.createElement("button", { onClick: onClick, disabled: !isEnable() }, "X\u955C\u50CF");
         }
+        function MotionSpeedBox() {
+            var css = { width: '50%' };
+            var curve = app.selection.onlyOneSelectedCurve;
+            function onChangeValue(val) {
+                if (curve) {
+                    curve.motionSpeed = val;
+                    app.getUI().refreshSelectionControlPoints();
+                }
+            }
+            var elem = React.createElement(NumberBox, { disabled: !curve, style: css, min: 0, step: 1, value: curve ? curve.motionSpeed : '--', onChangeValue: onChangeValue });
+            return elem;
+        }
         return React.createElement("div", null,
             React.createElement("div", null,
                 React.createElement(CurveList, null)),
@@ -3467,6 +3505,9 @@ var main = (function (exports) {
                 React.createElement(RemoveCurveButton, null)),
             React.createElement("div", null,
                 React.createElement(MirrorButton, null)),
+            React.createElement("div", null,
+                "\u8FD0\u52A8\u901F\u5EA6\uFF1A",
+                MotionSpeedBox()),
             React.createElement("div", null,
                 "\u751F\u6210\u8D28\u91CF\uFF1A",
                 ParameterBox('generateQuality', 1)),
@@ -3594,6 +3635,7 @@ var main = (function (exports) {
         function OnChangeDelta(val) {
             if (curve)
                 curve.setParameter(key, curve.getParameter(key) + val);
+            app.getUI().refreshSelectionControlPoints();
         }
         function OnChangeStart() {
             if (curve)
@@ -3627,7 +3669,7 @@ var main = (function (exports) {
             function onClickExport(e) {
                 var curve = app.selection.onlyOneSelectedCurve;
                 if (curve) {
-                    var buffer = curve.generateBuffer(control.motionSpeed);
+                    var buffer = curve.generateBuffer();
                     var blob = new Blob([buffer]);
                     var url = window.URL.createObjectURL(blob);
                     var elem = document.createElement('a');
@@ -3642,25 +3684,23 @@ var main = (function (exports) {
                     }, 60 * 1000);
                 }
             }
-            function onChangeMotionSpeed(value) {
-                control.motionSpeed = value;
-                self.setState({});
+            function onClickExportAll() {
+                app.exportAll();
             }
             return React.createElement(React.Fragment, null,
+                React.createElement("div", null, playbutton),
                 React.createElement("div", null,
-                    playbutton,
-                    React.createElement("button", { onClick: onClickExport, disabled: !app.selection.onlyOneSelectedCurve }, "\u5BFC\u51FA")),
+                    React.createElement("button", { onClick: onClickExport, disabled: !app.selection.onlyOneSelectedCurve }, "\u5BFC\u51FA"),
+                    React.createElement("button", { onClick: onClickExportAll }, "\u5BFC\u51FA\u5168\u90E8")),
                 React.createElement("div", null,
                     React.createElement("button", { onClick: () => app.changeToGameView() }, "\u6E38\u620F\u89C6\u56FE")),
-                React.createElement("div", null,
-                    "\u8FD0\u52A8\u901F\u5EA6\uFF1A",
-                    React.createElement(NumberBox, { min: 0, max: 2000, step: 1, value: control.motionSpeed, onChangeValue: onChangeMotionSpeed })),
                 React.createElement("div", null,
                     "\u64AD\u653E\u901F\u5EA6\uFF1A",
                     React.createElement("input", { style: { width: '100px', verticalAlign: 'middle' }, type: 'range', min: 0, max: 5, step: 0.1, value: control.timeScale, onChange: onTimeScaleChange }),
                     control.timeScale));
         }
     }
+    //# sourceMappingURL=AnimationEditor.js.map
 
     class Panel extends React.Component {
         constructor(props) {
@@ -3691,8 +3731,9 @@ var main = (function (exports) {
         //call this when selection changed
         //or control point data changed
         refreshSelectionControlPoints() {
-            //this.forceUpdate();
             this.setState({});
+        }
+        componentWillUnmount() {
         }
         render() {
             return React.createElement(React.Fragment, null,
@@ -4123,6 +4164,26 @@ var main = (function (exports) {
             var q2 = new THREE.Quaternion();
             q2.setFromAxisAngle(up, Math.PI);
             return q.premultiply(q2);
+        }
+        exportAll() {
+            var file = new JSZip();
+            this.curves.forEach(cc => {
+                file.file(cc.name + '.anim3', cc.generateBuffer());
+            });
+            file.generateAsync({ type: 'blob' })
+                .then(blob => {
+                var url = window.URL.createObjectURL(blob);
+                var elem = document.createElement('a');
+                elem.href = url;
+                elem.download = 'curves.zip';
+                elem.style.display = 'none';
+                document.body.appendChild(elem);
+                elem.click();
+                window.setTimeout(() => {
+                    document.body.removeChild(elem);
+                    window.URL.revokeObjectURL(url);
+                }, 60 * 1000);
+            });
         }
     }
     //# sourceMappingURL=Application.js.map
