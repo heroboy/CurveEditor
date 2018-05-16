@@ -12,9 +12,9 @@ canvas {
     position: absolute;
     top: 0;
     left: 0;
-    width: 230px;
+    width: 240px;
+    height: 100vh;
     font-size: 12px;
-
     display: block;
     overflow-y: auto;
     overflow-x: hidden;
@@ -50,7 +50,7 @@ canvas {
 }
 
 button {
-    width: 90px;
+    width: 85px;
     border: 1px solid gray;
     padding: 1px;
     margin: 2px;

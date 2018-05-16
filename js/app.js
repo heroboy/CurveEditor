@@ -1634,9 +1634,10 @@ var main = (function (exports) {
             this.disposed = false;
             this.dirtyForAnimation = false;
             this.dirtyForSelection = false;
+            //make public, set dirtyForAnimation
+            this.animOffset = new THREE.Vector3(0, 0, 0);
+            this.animWait = 0; //ms
             this._motionSpeed = 200;
-            //logic curve data changed.
-            //need to update geometry and ControlPoint;
             this._logicCurveChanged = true;
             this._curveChangeBindings = [];
             this.name = `curve${g_CurveCount}`;
@@ -1696,6 +1697,9 @@ var main = (function (exports) {
             var obj = this.curve.toJSON();
             obj.uuid = this.uuid;
             obj.motionSpeed = this._motionSpeed;
+            obj.animOffset = { x: this.animOffset.x, y: this.animOffset.y, z: this.animOffset.z };
+            obj.animWait = this.animWait;
+            obj.name = this.name;
             return obj;
         }
         fromJSON(obj) {
@@ -1709,6 +1713,17 @@ var main = (function (exports) {
                 }
                 if (typeof obj.motionSpeed === 'number' && obj.motionSpeed >= 0.01) {
                     this._motionSpeed = obj.motionSpeed;
+                }
+                if (obj.animOffset) {
+                    this.animOffset.x = obj.animOffset.x || 0;
+                    this.animOffset.y = obj.animOffset.y || 0;
+                    this.animOffset.z = obj.animOffset.z || 0;
+                }
+                if (typeof obj.animWait === 'number') {
+                    this.animWait = obj.animWait;
+                }
+                if (obj.name) {
+                    this.name = obj.name;
                 }
                 this._logicCurveChanged = true;
             }
@@ -1810,14 +1825,16 @@ var main = (function (exports) {
             duration = totalLength >= 0.1 ? totalLength / speed : 1;
             var count = genresult.positions.length;
             var times = [];
+            var animWait = this.animWait >= 0 ? this.animWait : 0;
             for (var i = 0; i < count; ++i) {
-                times.push(i / (count - 1) * duration);
+                times.push(i / (count - 1) * duration + animWait / 1000);
             }
             var flatPos = new Array(count * 3);
+            var { x: offX, y: offY, z: offZ } = this.animOffset;
             for (var i = 0; i < count; ++i) {
-                flatPos[i * 3 + 0] = genresult.positions[i].x;
-                flatPos[i * 3 + 1] = genresult.positions[i].y;
-                flatPos[i * 3 + 2] = genresult.positions[i].z;
+                flatPos[i * 3 + 0] = genresult.positions[i].x + offX;
+                flatPos[i * 3 + 1] = genresult.positions[i].y + offY;
+                flatPos[i * 3 + 2] = genresult.positions[i].z + offZ;
             }
             var positionTrack = new THREE.VectorKeyframeTrack('.position', times, flatPos, THREE.InterpolateLinear);
             var flatRot = new Array(count * 4);
@@ -1828,7 +1845,7 @@ var main = (function (exports) {
                 flatRot[i * 4 + 3] = genresult.quaternions[i].w;
             }
             var rotationTrack = new THREE.QuaternionKeyframeTrack('.quaternion', times, flatRot, THREE.InterpolateLinear);
-            return new THREE.AnimationClip('noname', duration, [positionTrack, rotationTrack]);
+            return new THREE.AnimationClip('noname', duration + animWait / 1000, [positionTrack, rotationTrack]);
         }
         generateBuffer(speed) {
             if (!speed)
@@ -2723,105 +2740,87 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=ControlPointSelection.js.map
 
-    class AnimationPreviewControl {
-        constructor() {
-            this._enable = false;
+    class AnimationSession {
+        constructor(box, curve) {
             this._clip = null;
             this._mixer = null;
             this._action = null;
+            this.box = box.clone(true);
+            this.curve = curve;
+            this.updateAnimation(curve);
+        }
+        get duration() {
+            if (this.curve.dirtyForAnimation) {
+                this.curve.dirtyForAnimation = false;
+                this.updateAnimation(this.curve);
+            }
+            if (this._clip)
+                return this._clip.duration;
+            return 0;
+        }
+        updateAnimation(curve) {
+            var clip = this._clip = curve.generateAnimationClip();
+            var mixer = this._mixer = new THREE.AnimationMixer(this.box);
+            var action = this._action = mixer.clipAction(clip);
+            action.play();
+        }
+        updateAt(time) {
+            if (this.curve.dirtyForAnimation) {
+                this.curve.dirtyForAnimation = false;
+                this.updateAnimation(this.curve);
+            }
+            this._mixer.time = time;
+            this._action.time = time;
+            this._mixer.update(0);
+        }
+        dispose() {
+            if (this.box && this.box.parent) {
+                this.box.parent.remove(this.box);
+            }
+        }
+    }
+    class AnimationPreviewControl {
+        constructor() {
             this._time = 0;
             this._playing = false;
             this._timeScale = 1;
-            this._curveDirty = false;
+            this._sessions = [];
             this._createPreviewObject();
-            this._previewObject.visible = this._enable;
-            //var gui = app.rootGui.addFolder('Animation');
-            //gui.add(this, 'enable');
-            //gui.add(this, 'play');
-            //gui.add(this, 'pause');
-            //gui.add(this, '_timeScale', 0, 4);
-            //gui.open();
         }
         get isPlaying() {
-            return this._playing && this.enable;
+            return this._playing;
         }
         get timeScale() { return this._timeScale; }
         set timeScale(val) { this._timeScale = val; }
-        play(curve) {
-            if (!this._playing || !this.enable) {
-                this._curve = curve;
-                this.enable = true;
-                this._action.play();
-                this._playing = true;
-            }
-        }
-        pause() {
-            if (this._playing) {
-                this._playing = false;
-            }
-        }
-        stop() {
-            this.enable = false;
-        }
-        get enable() { return this._enable; }
-        set enable(val) {
-            if (val !== this._enable) {
-                this._enable = val;
-                this._previewObject.visible = val;
-                if (val) {
-                    this._updateCurveAnimation();
+        play() {
+            this.stop();
+            var curves = app.curves.filter(x => x.visible);
+            if (curves.length > 0) {
+                for (var cc of curves) {
+                    var ss = new AnimationSession(this._previewObject, cc);
+                    this._time = 0;
+                    this._playing = true;
+                    app.scene.add(ss.box);
+                    this._sessions.push(ss);
                 }
             }
         }
-        _updateCurveAnimation() {
-            if (!this._curve) {
-                this._curve = app.selection.selectionCurves[0];
-                if (!this._curve)
-                    this._curve = app.curves[0];
-                if (!this._curve)
-                    return;
+        stop() {
+            for (var s of this._sessions) {
+                s.dispose();
             }
-            var clip = this._clip = this._curve.generateAnimationClip();
-            var mixer = this._mixer = new THREE.AnimationMixer(this._previewObject);
-            var action = this._action = mixer.clipAction(clip);
-            if (this._playing)
-                action.play();
+            this._sessions.length = 0;
+            this._playing = false;
         }
         _createPreviewObject() {
-            if (this._previewObject) {
-                app.scene.remove(this._previewObject);
-                this._previewObject['dispose']();
-                this._previewObject = null;
-            }
             var box = new THREE.Group();
-            app.scene.add(box);
             this._previewObject = box;
             this.loadExampleFish(box);
-            // var geom = new THREE.BoxBufferGeometry(0.2, 0.2, 0.2);
-            // var mat = new THREE.MeshLambertMaterial({
-            // 	color: 0x000000,
-            // 	transparent: true,
-            // 	opacity: 0.2
-            // });
-            // var box = new THREE.Mesh(geom, mat);
-            // box.scale.setScalar(100);
-            // {
-            // 	var geom2 = new THREE.BoxBufferGeometry(0.1, 0.1, 0.5);
-            // 	var mat2 = new THREE.MeshLambertMaterial({ color: 0xff0000 });
-            // 	box.add(new THREE.Mesh(geom2, mat2));
-            // }
-            // {
-            // 	var geom3 = new THREE.BoxBufferGeometry(0.3, 0.02, 0.4);
-            // 	var mat3 = new THREE.MeshLambertMaterial({ color: 0x0000ff });
-            // 	box.add(new THREE.Mesh(geom3, mat3));
-            // }
-            const ARROW_SCALE = 20.2;
-            box.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1 * ARROW_SCALE, 0, 0), 2 * ARROW_SCALE, 0xff0000, 1, 2.5), new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1 * ARROW_SCALE, 0), 2 * ARROW_SCALE, 0x00ff00, 1, 2.5), new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1 * ARROW_SCALE), 2 * ARROW_SCALE, 0x0000ff, 1, 2.5));
-            // box['dispose'] = function ()
-            // {
-            // 	mat.dispose();
-            // 	geom.dispose();
-            // }
+            // box.add(
+            // 	new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1 * ARROW_SCALE, 0, 0), 2 * ARROW_SCALE, 0xff0000, 1, 2.5),
+            // 	new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1 * ARROW_SCALE, 0), 2 * ARROW_SCALE, 0x00ff00, 1, 2.5),
+            // 	new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1 * ARROW_SCALE), 2 * ARROW_SCALE, 0x0000ff, 1, 2.5),
+            // );
             return box;
         }
         loadExampleFish(box) {
@@ -2845,21 +2844,17 @@ var main = (function (exports) {
             });
         }
         update() {
-            if (this._curve && this._curve.dirtyForAnimation) {
-                this._curveDirty = true;
-                this._curve.dirtyForAnimation = false;
-            }
-            if (this._enable && this._playing && this._curveDirty) {
-                this._curveDirty = false;
-                this._updateCurveAnimation();
-            }
-            if (this._enable && this._playing && this._clip) {
+            if (this._playing) {
                 this._time += app.deltaTime * this._timeScale;
-                if (this._time >= this._clip.duration)
+                var maxtime = 0;
+                for (var ss of this._sessions) {
+                    maxtime = Math.max(maxtime, ss.duration);
+                }
+                if (this._time >= maxtime)
                     this._time = 0;
-                this._mixer.time = this._time;
-                this._action.time = this._time;
-                this._mixer.update(0);
+                for (var ss of this._sessions) {
+                    ss.updateAt(this._time);
+                }
             }
         }
         dispose() {
@@ -2891,7 +2886,7 @@ var main = (function (exports) {
         componentDidMount() {
         }
         componentWillUnmount() {
-            console.log('numberbox unmount');
+            //console.log('numberbox unmount')
             if (this.dispose) {
                 this.dispose();
                 this.dispose = null;
@@ -3122,9 +3117,6 @@ var main = (function (exports) {
             if (curves.length === 1) {
                 showCurveType = curves[0].curve.curveType;
             }
-            var Highlight = props => {
-                return React.createElement("span", { style: { color: 'lightgreen' } }, props.children);
-            };
             return React.createElement("div", { className: 'ControlPointEditor' },
                 React.createElement("div", { style: { fontSize: '12px', whiteSpace: 'nowrap' } },
                     "\u9009\u4E2D\u4E86 ",
@@ -3148,6 +3140,9 @@ var main = (function (exports) {
                     " ",
                     SplitButton()));
         }
+    }
+    function Highlight(props) {
+        return React.createElement("span", { style: { color: 'lightgreen' } }, props.children);
     }
     //# sourceMappingURL=ControlPointEditor.js.map
 
@@ -3346,7 +3341,7 @@ var main = (function (exports) {
             super(props);
         }
         render() {
-            function BindButton(props) {
+            function BindButton() {
                 //var NullButton = <button disabled={true}>绑定</button>;
                 var sels = app.selection.selectionCurves;
                 if (sels.length === 1) {
@@ -3394,8 +3389,8 @@ var main = (function (exports) {
                 return null;
             }
             return React.createElement(React.Fragment, null,
-                React.createElement(FlipToggle, null),
-                React.createElement(BindButton, null));
+                FlipToggle(),
+                BindButton());
         }
     }
     //# sourceMappingURL=MirrorGhostCurveEditor.js.map
@@ -3409,17 +3404,6 @@ var main = (function (exports) {
             console.log('will unmount');
         }
         render() {
-            function CreateCurveButton(props) {
-                function onClick() {
-                    var curve = app.addNewCurve(props.type);
-                    app.recordAddCurve(curve);
-                }
-                var css = {
-                    width: '47%'
-                };
-                return React.createElement(React.Fragment, null,
-                    React.createElement("button", { style: css, onClick: onClick }, props.name));
-            }
             var css_round_box = {
                 borderRadius: '5px',
                 border: '1px solid white',
@@ -3491,6 +3475,24 @@ var main = (function (exports) {
             var elem = React.createElement(NumberBox, { disabled: !curve, style: css, min: 0, step: 1, value: curve ? curve.motionSpeed : '--', onChangeValue: onChangeValue });
             return elem;
         }
+        function NameEditor() {
+            var curve = app.selection.onlyOneSelectedCurve;
+            var style = {
+                width: '120px'
+            };
+            if (curve) {
+                function onChange(e) {
+                    if (curve) {
+                        curve.name = e.target.value;
+                        app.getUI().refreshSelectionControlPoints();
+                    }
+                }
+                return React.createElement("input", { style: style, type: 'text', value: curve.name, onChange: onChange });
+            }
+            else {
+                return React.createElement("input", { style: style, type: 'text', value: '', disabled: true });
+            }
+        }
         return React.createElement("div", null,
             React.createElement("div", null,
                 React.createElement(CurveList, null)),
@@ -3506,6 +3508,9 @@ var main = (function (exports) {
             React.createElement("div", null,
                 React.createElement(MirrorButton, null)),
             React.createElement("div", null,
+                "\u66F2\u7EBF\u540D\u5B57\uFF1A",
+                NameEditor()),
+            React.createElement("div", null,
                 "\u8FD0\u52A8\u901F\u5EA6\uFF1A",
                 MotionSpeedBox()),
             React.createElement("div", null,
@@ -3516,11 +3521,85 @@ var main = (function (exports) {
                 React.createElement(CurveColorInput, null)),
             React.createElement("div", null,
                 "\u663E\u793A\u66F2\u7EBF\uFF1A",
-                React.createElement(IndeterminateCheckbox, { disabled: curves.length === 0, indeterminate: !allHidden && !allVisible, checked: allVisible, onChange: onVisibleChange })));
+                React.createElement(IndeterminateCheckbox, { disabled: curves.length === 0, indeterminate: !allHidden && !allVisible, checked: allVisible, onChange: onVisibleChange })),
+            React.createElement("div", null,
+                "\u9C7C\u7FA4\u504F\u79FB\uFF1A",
+                React.createElement("br", null),
+                AnimOffsetEditor()),
+            React.createElement("div", null,
+                "\u9C7C\u7FA4\u5EF6\u8FDF\uFF1A",
+                AnimWaitEditor()));
+    }
+    function AnimOffsetEditor() {
+        var curve = app.selection.onlyOneSelectedCurve;
+        function Axis(key) {
+            var style = {
+                width: '36px'
+            };
+            if (!curve) {
+                return React.createElement("span", null,
+                    key,
+                    ": ",
+                    React.createElement(NumberBox, { style: style, disabled: true }));
+            }
+            else {
+                var pt = curve.animOffset;
+                function onChangeValue(val) {
+                    app.recordCurveModify(curve);
+                    pt[key] = val;
+                    curve.dirtyForAnimation = true;
+                    app.getUI().refreshSelectionControlPoints();
+                }
+                function onChangeDelta(val) {
+                    pt[key] += val;
+                    curve.dirtyForAnimation = true;
+                    app.getUI().refreshSelectionControlPoints();
+                }
+                function onChangeStart() {
+                    app.recordCurveModify(curve);
+                }
+                var showValue = Math.round(pt[key] * 100) / 100;
+                return React.createElement("span", null,
+                    key,
+                    ": ",
+                    React.createElement(NumberBox, { style: style, step: 1, value: showValue.toString(), onChangeValue: onChangeValue, onChangeDelta: onChangeDelta, onChangeStart: onChangeStart }));
+            }
+        }
+        return React.createElement(React.Fragment, null,
+            Axis('x'),
+            " ",
+            Axis('y'),
+            " ",
+            Axis('z'));
+    }
+    function AnimWaitEditor() {
+        var curve = app.selection.onlyOneSelectedCurve;
+        var css = { width: '50%' };
+        if (!curve) {
+            return React.createElement(NumberBox, { style: css, disabled: true });
+        }
+        else {
+            function onChangeValue(val) {
+                app.recordCurveModify(curve);
+                curve.animWait = val;
+                curve.dirtyForAnimation = true;
+                app.getUI().refreshSelectionControlPoints();
+            }
+            function onChangeDelta(val) {
+                curve.animWait += val;
+                curve.dirtyForAnimation = true;
+                app.getUI().refreshSelectionControlPoints();
+            }
+            function onChangeStart() {
+                app.recordCurveModify(curve);
+            }
+            var showValue = Math.round(curve.animWait);
+            return React.createElement(NumberBox, { style: css, step: 1, value: showValue, onChangeDelta: onChangeDelta, onChangeValue: onChangeValue, onChangeStart: onChangeStart });
+        }
     }
     function CurveList() {
         var sel = app.selection.onlyOneSelectedCurve;
-        var list = app.curves.map(curve => {
+        var list = app.curves.filter(x => x.curve.curveType !== 'MirrorGhostCurve').map(curve => {
             return React.createElement("option", { key: curve.uuid, value: curve.uuid },
                 curve.name,
                 curve.visible ? '' : '(隐藏的)');
@@ -3645,6 +3724,17 @@ var main = (function (exports) {
         var value = curve ? (curve.getParameter(key) || 0) : 0;
         return React.createElement(NumberBox, { disabled: !curve, style: css, step: step, value: value, onChangeValue: OnChangeValue, onChangeDelta: OnChangeDelta, onChangeStart: OnChangeStart });
     }
+    function CreateCurveButton(props) {
+        function onClick() {
+            var curve = app.addNewCurve(props.type);
+            app.recordAddCurve(curve);
+        }
+        var css = {
+            width: '47%'
+        };
+        return React.createElement(React.Fragment, null,
+            React.createElement("button", { style: css, onClick: onClick }, props.name));
+    }
     //# sourceMappingURL=CurveEditor.js.map
 
     class AnimationEditor extends React.Component {
@@ -3687,11 +3777,58 @@ var main = (function (exports) {
             function onClickExportAll() {
                 app.exportAll();
             }
+            function onClickSave() {
+                var blob = new Blob([JSON.stringify(app.toJSON(), null, '    ')]);
+                var url = window.URL.createObjectURL(blob);
+                var elem = document.createElement('a');
+                elem.href = url;
+                elem.download = 'curves.scene';
+                elem.style.display = 'none';
+                document.body.appendChild(elem);
+                elem.click();
+                window.setTimeout(() => {
+                    document.body.removeChild(elem);
+                    window.URL.revokeObjectURL(url);
+                }, 60 * 1000);
+            }
+            var fileInput;
+            function onClickOpen() {
+                if (fileInput) {
+                    fileInput.click();
+                }
+            }
+            function onFileChange(e) {
+                e = e.nativeEvent;
+                var files = e.target.files;
+                if (files.length === 1) {
+                    var file = files[0];
+                    var fileReader = new FileReader();
+                    fileReader.onload = function (e) {
+                        var obj;
+                        try {
+                            obj = JSON.parse(e.target.result);
+                        }
+                        catch (e) {
+                            alert('打开失败');
+                            return;
+                        }
+                        console.log('loaded', obj);
+                        app.fromJSON(obj);
+                        app.getUI().refreshSelectionControlPoints();
+                    };
+                    fileReader.readAsText(file);
+                }
+                console.log('onFileChange', e, files);
+            }
             return React.createElement(React.Fragment, null,
                 React.createElement("div", null, playbutton),
                 React.createElement("div", null,
                     React.createElement("button", { onClick: onClickExport, disabled: !app.selection.onlyOneSelectedCurve }, "\u5BFC\u51FA"),
                     React.createElement("button", { onClick: onClickExportAll }, "\u5BFC\u51FA\u5168\u90E8")),
+                React.createElement("div", null,
+                    React.createElement("button", { onClick: onClickSave }, "\u4FDD\u5B58\u573A\u666F"),
+                    React.createElement("input", { onChange: onFileChange, style: { display: 'none' }, type: 'file', ref: x => fileInput = x, accept: '.scene' }),
+                    React.createElement("button", { onClick: onClickOpen }, "\u6253\u5F00\u573A\u666F")),
                 React.createElement("div", null,
                     React.createElement("button", { onClick: () => app.changeToGameView() }, "\u6E38\u620F\u89C6\u56FE")),
                 React.createElement("div", null,
@@ -3969,7 +4106,8 @@ var main = (function (exports) {
                     });
                 }
             }
-            this._records.push(record);
+            if (record.length > 0)
+                this._records.push(record);
             return record;
         }
         recordAddCurve(curve) {
@@ -4076,6 +4214,7 @@ var main = (function (exports) {
                     }
                 }
             }
+            this._records.length = 0;
         }
         addNewCurve(type) {
             var curve = new CurveObject({ type: type });
@@ -4167,9 +4306,30 @@ var main = (function (exports) {
         }
         exportAll() {
             var file = new JSZip();
-            this.curves.forEach(cc => {
+            var configJson = {
+                redfish: [],
+                fistList: [],
+                fishTimes: [],
+                positionOffsets: [],
+                traceIDs: [],
+                TotalTime: 0,
+            };
+            var maxtime = 0;
+            this.curves.forEach((cc, index) => {
                 file.file(cc.name + '.anim3', cc.generateBuffer());
+                configJson.redfish.push(false);
+                configJson.fistList.push(0);
+                configJson.fishTimes.push(cc.animWait);
+                configJson.positionOffsets.push({
+                    x: cc.animOffset.x,
+                    y: cc.animOffset.y,
+                    z: cc.animOffset.z,
+                });
+                configJson.traceIDs.push(index);
+                maxtime = Math.max(maxtime, cc.generateAnimationClip().duration);
             });
+            configJson.TotalTime = maxtime * 1000;
+            file.file('config.json', 'var AllYuZheng=[];\nAllYuZheng[0]=' + JSON.stringify(configJson, null, '    '));
             file.generateAsync({ type: 'blob' })
                 .then(blob => {
                 var url = window.URL.createObjectURL(blob);
