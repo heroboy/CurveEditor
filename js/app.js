@@ -1601,27 +1601,101 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=MirrorGhostCurve.js.map
 
-    function createCurve(type, initJsonObject) {
+    class OneGhostCurve extends AbstractCurve {
+        constructor(jsobj) {
+            super();
+            this.curveType = 'OneGhostCurve';
+            this.isGhostCurve = true;
+            this._refUUID = null;
+            this._curve = null;
+            this.fromJSON(jsobj);
+        }
+        toJSON() {
+            return { type: this.curveType, refUUID: this._refUUID };
+        }
+        fromJSON(obj) {
+            this._refUUID = obj.refUUID || null;
+        }
+        allowPointRotation() { return false; }
+        allowPointTranslation() { return false; }
+        getControlPointCount() { return 1; }
+        getPointPosition(i, target) {
+            if (i === 0) {
+                if (this._curve) {
+                    var ret = this._curve.generate();
+                    if (ret && ret.positions[0]) {
+                        target.copy(ret.positions[0]);
+                        if (this.parent) {
+                            target.add(this.parent.animOffset);
+                            return;
+                        }
+                    }
+                }
+            }
+            target.set(0, 0, 0);
+        }
+        generate(numpoints) {
+            if (this._curve)
+                return this._curve.generate();
+            return {
+                positions: [],
+                rotations: [],
+                forwards: [],
+                quaternions: []
+            };
+        }
+        getParameter(key) {
+            if (key === 'refUUID') {
+                return this._refUUID;
+            }
+            if (key === 'refCurve') {
+                return this._curve;
+            }
+        }
+        setParameter(key, value) {
+            if (key === 'refUUID') {
+                this._refUUID = value;
+                return 'norecord'; //todo:不需要undo record
+            }
+            if (key === 'refCurve') {
+                if (value && typeof value.curveType === 'string' && typeof value.generate === 'function' && !value.isGhostCurve) {
+                    this._curve = value;
+                    return true;
+                }
+            }
+        }
+    }
+    //# sourceMappingURL=OneGhostCurve.js.map
+
+    function createCurve(type, initJsonObject, parent) {
+        var ret = null;
         if (type === 'CatmullRomCurve3') {
-            return new CatmullRomCurve3(initJsonObject);
+            ret = new CatmullRomCurve3(initJsonObject);
         }
         else if (type === 'QuadraticBezierCurve3') {
-            return new QuadraticBezierCurve3(initJsonObject);
+            ret = new QuadraticBezierCurve3(initJsonObject);
         }
         else if (type === 'CubicBezierCurve3') {
-            return new CubicBezierCurve3(initJsonObject);
+            ret = new CubicBezierCurve3(initJsonObject);
         }
         else if (type === 'ArcCurve') {
-            return new ArcCurve(initJsonObject);
+            ret = new ArcCurve(initJsonObject);
         }
         else if (type === 'TranslationGhostCurve') {
-            return new TranslationGhostCurve(initJsonObject);
+            ret = new TranslationGhostCurve(initJsonObject);
         }
         else if (type === 'MirrorGhostCurve') {
-            return new MirrorGhostCurve(initJsonObject);
+            ret = new MirrorGhostCurve(initJsonObject);
         }
-        console.error('create curve failed', initJsonObject);
-        return null;
+        else if (type === 'OneGhostCurve') {
+            ret = new OneGhostCurve(initJsonObject);
+        }
+        if (ret) {
+            ret.parent = parent;
+        }
+        if (!ret)
+            console.error('create curve failed', initJsonObject);
+        return ret;
     }
     //# sourceMappingURL=index.js.map
 
@@ -1643,7 +1717,7 @@ var main = (function (exports) {
             this.name = `curve${g_CurveCount}`;
             ++g_CurveCount;
             this.controlPoints = [];
-            this.curve = createCurve(initJson.type, initJson);
+            this.curve = createCurve(initJson.type, initJson, this);
             this.geometry = new THREE.BufferGeometry();
             var attr = new THREE.BufferAttribute(new Float32Array(0), 3, false);
             attr.setDynamic(true);
@@ -1762,6 +1836,9 @@ var main = (function (exports) {
                 this.dirtyForAnimation = true;
                 this.dirtyForSelection = true;
             }
+        }
+        updateCurveToControlPoint() {
+            this._updateCurveToControlPoint();
         }
         _updateCurveToControlPoint() {
             var count = this.curve.getControlPointCount();
@@ -2112,7 +2189,7 @@ var main = (function (exports) {
         constructor(app) {
             super();
             this.objects = [];
-            this._camera = app.camera;
+            //this._camera = app.camera;
             this._domElement = app.domElement;
             this._rayCaster = new THREE.Raycaster();
             var self = this;
@@ -2172,7 +2249,7 @@ var main = (function (exports) {
                 x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
                 y: -((e.clientY - rect.top) / rect.height) * 2 + 1
             };
-            this._rayCaster.setFromCamera(mouse, this._camera);
+            this._rayCaster.setFromCamera(mouse, app.currentCamera);
             array = this._rayCaster.intersectObjects(this.objects, true, array);
             array.sort((a, b) => {
                 return a.distance - b.distance;
@@ -2242,7 +2319,7 @@ var main = (function (exports) {
             this._previousPosition = new THREE.Vector3();
             this._currentPosition = new THREE.Vector3();
             this.scene = scene;
-            this.camera = camera;
+            //this.camera = camera;
             this.domElement = domElement;
             this.eventHelper = WrapEventDispatcher(domElement)
                 .add('mousedown', e => this._onMouseDown(e), false)
@@ -2300,7 +2377,7 @@ var main = (function (exports) {
             var rect = this.domElement.getBoundingClientRect();
             this._mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             this._mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-            this._rayCaster.setFromCamera(this._mouse, this.camera);
+            this._rayCaster.setFromCamera(this._mouse, app.currentCamera);
         }
         _TestCastPlane(target) {
             if (this._rayCaster.ray.intersectPlane(this._castPlane, target))
@@ -2566,6 +2643,7 @@ var main = (function (exports) {
                 this.lastRotation.copy(this.dummy.quaternion);
                 if (this.controlMode === 'translate') {
                     this.dragControl.detachObject();
+                    this.transformControl['setCamera'](app.currentCamera);
                     this.transformControl.visible = true;
                     this.transformControl.attach(this.dummy);
                 }
@@ -3191,15 +3269,6 @@ var main = (function (exports) {
                 if (!other || other.curve.isGhostCurve)
                     return null;
                 function bind() {
-                    // if (one.setParameter('refCurve', other.curve))
-                    // {
-                    // 	one.clearBindingCurveChange();
-                    // 	one.bindCurveChange(other);
-                    // }
-                    // else
-                    // {
-                    // 	console.error('bind error??');
-                    // }
                     one.setParameter('refUUID', other.uuid);
                 }
                 return React.createElement("div", null,
@@ -3360,15 +3429,6 @@ var main = (function (exports) {
                 if (!other || other.curve.isGhostCurve)
                     return null;
                 function bind() {
-                    // if (one.setParameter('refCurve', other.curve))
-                    // {
-                    // 	one.clearBindingCurveChange();
-                    // 	one.bindCurveChange(other);
-                    // }
-                    // else
-                    // {
-                    // 	console.error('bind error??');
-                    // }
                     one.setParameter('refUUID', other.uuid);
                 }
                 return React.createElement("div", null,
@@ -3417,13 +3477,15 @@ var main = (function (exports) {
                     React.createElement(CreateCurveButton, { type: 'CubicBezierCurve3', name: '\u4E09\u6B21\u8D1D\u585E\u5C14\u66F2\u7EBF' }),
                     React.createElement(CreateCurveButton, { type: 'ArcCurve', name: '\u87BA\u65CB\u66F2\u7EBF' }),
                     React.createElement(CreateCurveButton, { type: 'TranslationGhostCurve', name: '\u591A\u91CD\u5206\u8EAB\u66F2\u7EBF' }),
-                    React.createElement(CreateCurveButton, { type: 'MirrorGhostCurve', name: '\u955C\u50CF\u66F2\u7EBF' })),
+                    React.createElement(CreateCurveButton, { type: 'MirrorGhostCurve', name: '\u955C\u50CF\u66F2\u7EBF' }),
+                    React.createElement(CreateCurveButton, { type: 'OneGhostCurve', name: '\u5206\u8EAB\u66F2\u7EBF' })),
                 React.createElement(CurveCommonEditor, null),
                 React.createElement("hr", null),
                 React.createElement(ArcCurveEditor, null),
                 React.createElement(CatmullRomCurve3Editor, null),
                 React.createElement(TranslationGhostCurveEditor, null),
-                React.createElement(MirrorGhostCurveEditor, null));
+                React.createElement(MirrorGhostCurveEditor, null),
+                BindButton('OneGhostCurve'));
         }
     }
     function CurveCommonEditor() {
@@ -3548,11 +3610,13 @@ var main = (function (exports) {
                     app.recordCurveModify(curve);
                     pt[key] = val;
                     curve.dirtyForAnimation = true;
+                    curve.updateCurveToControlPoint();
                     app.getUI().refreshSelectionControlPoints();
                 }
                 function onChangeDelta(val) {
                     pt[key] += val;
                     curve.dirtyForAnimation = true;
+                    curve.updateCurveToControlPoint();
                     app.getUI().refreshSelectionControlPoints();
                 }
                 function onChangeStart() {
@@ -3734,6 +3798,30 @@ var main = (function (exports) {
         };
         return React.createElement(React.Fragment, null,
             React.createElement("button", { style: css, onClick: onClick }, props.name));
+    }
+    function BindButton(MY_CURVE_TYPE) {
+        //var NullButton = <button disabled={true}>绑定</button>;
+        var sels = app.selection.selectionCurves;
+        if (sels.length === 1) {
+            if (sels[0].curve.curveType === MY_CURVE_TYPE &&
+                !sels[0].curve.getParameter('refCurve')) {
+                return React.createElement("div", { style: { color: 'red' } }, "\u8BF7\u540C\u65F6\u9009\u62E9\u53E6\u4E00\u6761\u66F2\u7EBF\u8FDB\u884C\u7ED1\u5B9A");
+            }
+        }
+        if (sels.length != 2)
+            return null;
+        var [one, other] = sels;
+        if (!one || one.curve.curveType !== MY_CURVE_TYPE)
+            [one, other] = [other, one];
+        if (!one || one.curve.curveType != MY_CURVE_TYPE)
+            return null;
+        if (!other || other.curve.isGhostCurve)
+            return null;
+        function bind() {
+            one.setParameter('refUUID', other.uuid);
+        }
+        return React.createElement("div", null,
+            React.createElement("button", { onClick: bind }, "\u7ED1\u5B9A"));
     }
     //# sourceMappingURL=CurveEditor.js.map
 
@@ -3942,8 +4030,10 @@ var main = (function (exports) {
     THREE.Object3D.prototype['lookAt'].call({ position: CAMERA_POS, quaternion: CAMERA_ROTATION, up: new THREE.Vector3(0, 1, 0), isCamera: true }, 0, 0, 0);
     class Application {
         constructor() {
+            this._useAltCamera = false;
             this.scene = new THREE.Scene();
             this.camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+            this.altCamera = new THREE.OrthographicCamera(-1000, 1000, 1000, -1000, 0.1, 1000);
             this.renderer = new THREE.WebGLRenderer();
             this.curves = [];
             this.controlPoints = [];
@@ -4019,6 +4109,14 @@ var main = (function (exports) {
                 this.camera.updateProjectionMatrix();
             }
             this.camera.updateMatrix();
+            //this.camera.add(this.altCamera);
+            this.scene.add(this.altCamera);
+            if (this.altCamera instanceof THREE.OrthographicCamera) {
+                this.altCamera.far = 2800 * 10;
+                this.altCamera.near = 9.9;
+                this.altCamera.updateProjectionMatrix();
+            }
+            this.altCamera.updateMatrix();
         }
         initOrbitControl() {
             var control = new THREE.OrbitControls(this.camera, this.renderer.domElement);
@@ -4059,6 +4157,15 @@ var main = (function (exports) {
                 this.camera.aspect = window.innerWidth / window.innerHeight;
                 this.camera.updateProjectionMatrix();
             }
+            if (this.altCamera instanceof THREE.OrthographicCamera) {
+                var wsize = 2500;
+                var hsize = wsize / (window.innerWidth / window.innerHeight);
+                this.altCamera.left = -wsize;
+                this.altCamera.right = wsize;
+                this.altCamera.top = hsize;
+                this.altCamera.bottom = -hsize;
+                this.altCamera.updateProjectionMatrix();
+            }
             this.render();
         }
         addControlPoint(c) {
@@ -4087,7 +4194,15 @@ var main = (function (exports) {
             requestAnimationFrame(() => this.animate());
         }
         render() {
-            this.renderer.render(this.scene, this.camera, undefined, true);
+            if (this._useAltCamera) {
+                this.altCamera.position.copy(this.camera.position);
+                this.altCamera.quaternion.copy(this.camera.quaternion);
+                this.altCamera.updateMatrixWorld(true);
+            }
+            this.renderer.render(this.scene, this.currentCamera, undefined, true);
+        }
+        get currentCamera() {
+            return this._useAltCamera ? this.altCamera : this.camera;
         }
         recordAllCurves() {
             this.recordCurveModify(this.curves);

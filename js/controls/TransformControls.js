@@ -714,6 +714,11 @@
 
 		};
 
+		this.setCamera = function(_camera)
+		{
+			camera = _camera;
+		}
+
 		this.attach = function ( object ) {
 
 			this.object = object;
