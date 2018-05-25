@@ -1620,18 +1620,6 @@ var main = (function (exports) {
         allowPointTranslation() { return false; }
         getControlPointCount() { return 1; }
         getPointPosition(i, target) {
-            if (i === 0) {
-                if (this._curve) {
-                    var ret = this._curve.generate();
-                    if (ret && ret.positions[0]) {
-                        target.copy(ret.positions[0]);
-                        if (this.parent) {
-                            target.add(this.parent.animOffset);
-                            return;
-                        }
-                    }
-                }
-            }
             target.set(0, 0, 0);
         }
         generate(numpoints) {
@@ -1709,8 +1697,8 @@ var main = (function (exports) {
             this.dirtyForAnimation = false;
             this.dirtyForSelection = false;
             //make public, set dirtyForAnimation
-            this.animOffset = new THREE.Vector3(0, 0, 0);
-            this.animWait = 0; //ms
+            //animOffset = new THREE.Vector3(0, 0, 0);
+            //animWait = 0; //ms
             this._motionSpeed = 200;
             this._logicCurveChanged = true;
             this._curveChangeBindings = [];
@@ -1771,8 +1759,8 @@ var main = (function (exports) {
             var obj = this.curve.toJSON();
             obj.uuid = this.uuid;
             obj.motionSpeed = this._motionSpeed;
-            obj.animOffset = { x: this.animOffset.x, y: this.animOffset.y, z: this.animOffset.z };
-            obj.animWait = this.animWait;
+            //obj.animOffset = { x: this.animOffset.x, y: this.animOffset.y, z: this.animOffset.z };
+            //obj.animWait = this.animWait;
             obj.name = this.name;
             return obj;
         }
@@ -1787,14 +1775,6 @@ var main = (function (exports) {
                 }
                 if (typeof obj.motionSpeed === 'number' && obj.motionSpeed >= 0.01) {
                     this._motionSpeed = obj.motionSpeed;
-                }
-                if (obj.animOffset) {
-                    this.animOffset.x = obj.animOffset.x || 0;
-                    this.animOffset.y = obj.animOffset.y || 0;
-                    this.animOffset.z = obj.animOffset.z || 0;
-                }
-                if (typeof obj.animWait === 'number') {
-                    this.animWait = obj.animWait;
                 }
                 if (obj.name) {
                     this.name = obj.name;
@@ -1888,9 +1868,19 @@ var main = (function (exports) {
             for (var cp of this.controlPoints)
                 cp.attachTo(app);
         }
-        generateAnimationClip(speed) {
-            if (!speed)
-                speed = this._motionSpeed;
+        generateAnimationClip(animOffset, animWait) {
+            if (!(animWait > 0))
+                animWait = 0;
+            var offX, offY, offZ;
+            if (animOffset) {
+                offX = animOffset.x;
+                offY = animOffset.y;
+                offZ = animOffset.z;
+            }
+            else {
+                offX = offY = offZ = 0;
+            }
+            let speed = this._motionSpeed;
             var duration;
             if (!(speed && speed > 0.01))
                 speed = 100;
@@ -1902,12 +1892,10 @@ var main = (function (exports) {
             duration = totalLength >= 0.1 ? totalLength / speed : 1;
             var count = genresult.positions.length;
             var times = [];
-            var animWait = this.animWait >= 0 ? this.animWait : 0;
             for (var i = 0; i < count; ++i) {
                 times.push(i / (count - 1) * duration + animWait / 1000);
             }
             var flatPos = new Array(count * 3);
-            var { x: offX, y: offY, z: offZ } = this.animOffset;
             for (var i = 0; i < count; ++i) {
                 flatPos[i * 3 + 0] = genresult.positions[i].x + offX;
                 flatPos[i * 3 + 1] = genresult.positions[i].y + offY;
@@ -1924,10 +1912,8 @@ var main = (function (exports) {
             var rotationTrack = new THREE.QuaternionKeyframeTrack('.quaternion', times, flatRot, THREE.InterpolateLinear);
             return new THREE.AnimationClip('noname', duration + animWait / 1000, [positionTrack, rotationTrack]);
         }
-        generateBuffer(speed) {
-            if (!speed)
-                speed = this._motionSpeed;
-            var clip = this.generateAnimationClip(speed);
+        generateBuffer() {
+            var clip = this.generateAnimationClip();
             var posTrack = clip.tracks[0];
             var rotTrack = clip.tracks[1];
             var duration = clip.duration;
@@ -2819,37 +2805,56 @@ var main = (function (exports) {
     //# sourceMappingURL=ControlPointSelection.js.map
 
     class AnimationSession {
-        constructor(box, curve) {
+        constructor(parent, box, fishGroup) {
             this._clip = null;
             this._mixer = null;
             this._action = null;
+            this._parent = parent;
             this.box = box.clone(true);
-            this.curve = curve;
-            this.updateAnimation(curve);
+            this.fishGroup = fishGroup;
+            this.updateAnimation(fishGroup);
+        }
+        checkDirty() {
+            let ret = false;
+            if (this.fishGroup.dirtyForAnimation) {
+                ret = true;
+                this._parent.delaySetDirtyFalse(this.fishGroup);
+            }
+            if (this.fishGroup.curve && this.fishGroup.curve.dirtyForAnimation) {
+                ret = true;
+                this._parent.delaySetDirtyFalse(this.fishGroup.curve);
+            }
+            return ret;
         }
         get duration() {
-            if (this.curve.dirtyForAnimation) {
-                this.curve.dirtyForAnimation = false;
-                this.updateAnimation(this.curve);
+            if (this.checkDirty()) {
+                this.updateAnimation(this.fishGroup);
             }
             if (this._clip)
                 return this._clip.duration;
             return 0;
         }
-        updateAnimation(curve) {
-            var clip = this._clip = curve.generateAnimationClip();
-            var mixer = this._mixer = new THREE.AnimationMixer(this.box);
-            var action = this._action = mixer.clipAction(clip);
-            action.play();
+        updateAnimation(fishGroup) {
+            var clip = this._clip = fishGroup.generateAnimationClip();
+            if (clip) {
+                var mixer = this._mixer = new THREE.AnimationMixer(this.box);
+                var action = this._action = mixer.clipAction(clip);
+                action.play();
+            }
+            else {
+                this._mixer = null;
+                this._action = null;
+            }
         }
         updateAt(time) {
-            if (this.curve.dirtyForAnimation) {
-                this.curve.dirtyForAnimation = false;
-                this.updateAnimation(this.curve);
+            if (this.checkDirty()) {
+                this.updateAnimation(this.fishGroup);
             }
-            this._mixer.time = time;
-            this._action.time = time;
-            this._mixer.update(0);
+            if (this._clip) {
+                this._mixer.time = time;
+                this._action.time = time;
+                this._mixer.update(0);
+            }
         }
         dispose() {
             if (this.box && this.box.parent) {
@@ -2863,6 +2868,7 @@ var main = (function (exports) {
             this._playing = false;
             this._timeScale = 1;
             this._sessions = [];
+            this._delaySetDirtyForAnimation = [];
             this._createPreviewObject();
         }
         get isPlaying() {
@@ -2872,10 +2878,10 @@ var main = (function (exports) {
         set timeScale(val) { this._timeScale = val; }
         play() {
             this.stop();
-            var curves = app.curves.filter(x => x.visible);
-            if (curves.length > 0) {
-                for (var cc of curves) {
-                    var ss = new AnimationSession(this._previewObject, cc);
+            var groups = app.fishGroup.filter(x => x.visible && x.curve);
+            if (groups.length > 0) {
+                for (var gg of groups) {
+                    var ss = new AnimationSession(this, this._previewObject, gg);
                     this._time = 0;
                     this._playing = true;
                     app.scene.add(ss.box);
@@ -2934,11 +2940,67 @@ var main = (function (exports) {
                     ss.updateAt(this._time);
                 }
             }
+            if (this._delaySetDirtyForAnimation.length) {
+                for (let o of this._delaySetDirtyForAnimation) {
+                    o.dirtyForAnimation = false;
+                }
+                this._delaySetDirtyForAnimation.length = 0;
+            }
+        }
+        delaySetDirtyFalse(o) {
+            this._delaySetDirtyForAnimation.push(o);
         }
         dispose() {
         }
     }
     //# sourceMappingURL=AnimationPreviewControl.js.map
+
+    class FishGroup {
+        constructor() {
+            this.uuid = THREE.Math.generateUUID();
+            this.animWait = 0;
+            this.animOffset = new THREE.Vector3(0, 0, 0);
+            this.dirtyForAnimation = true;
+            this.visible = true;
+        }
+        toJSON() {
+            var obj = {
+                uuid: this.uuid,
+                animWait: this.animWait,
+                animOffset: {
+                    x: this.animOffset.x,
+                    y: this.animOffset.y,
+                    z: this.animOffset.z
+                },
+                refCurve: this.curve ? this.curve.uuid : '',
+                visible: this.visible,
+            };
+            return obj;
+        }
+        fromJSON(obj) {
+            this.animWait = obj.animWait || 0;
+            if (obj.animOffset) {
+                this.animOffset.x = obj.animOffset.x || 0;
+                this.animOffset.y = obj.animOffset.y || 0;
+                this.animOffset.z = obj.animOffset.z || 0;
+            }
+            else {
+                this.animOffset.x = 0;
+                this.animOffset.y = 0;
+                this.animOffset.z = 0;
+            }
+            this.curve = app.getCurveByUUID(obj.refCurve);
+            this.dirtyForAnimation = true;
+            this.visible = !!obj.visible;
+        }
+        generateAnimationClip() {
+            if (this.curve) {
+                return this.curve.generateAnimationClip(this.animOffset, this.animWait);
+            }
+            return null;
+        }
+    }
+    //# sourceMappingURL=FishGroup.js.map
 
     function formatNumber(n) {
         if (typeof n === 'number') {
@@ -3583,83 +3645,7 @@ var main = (function (exports) {
                 React.createElement(CurveColorInput, null)),
             React.createElement("div", null,
                 "\u663E\u793A\u66F2\u7EBF\uFF1A",
-                React.createElement(IndeterminateCheckbox, { disabled: curves.length === 0, indeterminate: !allHidden && !allVisible, checked: allVisible, onChange: onVisibleChange })),
-            React.createElement("div", null,
-                "\u9C7C\u7FA4\u504F\u79FB\uFF1A",
-                React.createElement("br", null),
-                AnimOffsetEditor()),
-            React.createElement("div", null,
-                "\u9C7C\u7FA4\u5EF6\u8FDF\uFF1A",
-                AnimWaitEditor()));
-    }
-    function AnimOffsetEditor() {
-        var curve = app.selection.onlyOneSelectedCurve;
-        function Axis(key) {
-            var style = {
-                width: '36px'
-            };
-            if (!curve) {
-                return React.createElement("span", null,
-                    key,
-                    ": ",
-                    React.createElement(NumberBox, { style: style, disabled: true }));
-            }
-            else {
-                var pt = curve.animOffset;
-                function onChangeValue(val) {
-                    app.recordCurveModify(curve);
-                    pt[key] = val;
-                    curve.dirtyForAnimation = true;
-                    curve.updateCurveToControlPoint();
-                    app.getUI().refreshSelectionControlPoints();
-                }
-                function onChangeDelta(val) {
-                    pt[key] += val;
-                    curve.dirtyForAnimation = true;
-                    curve.updateCurveToControlPoint();
-                    app.getUI().refreshSelectionControlPoints();
-                }
-                function onChangeStart() {
-                    app.recordCurveModify(curve);
-                }
-                var showValue = Math.round(pt[key] * 100) / 100;
-                return React.createElement("span", null,
-                    key,
-                    ": ",
-                    React.createElement(NumberBox, { style: style, step: 1, value: showValue.toString(), onChangeValue: onChangeValue, onChangeDelta: onChangeDelta, onChangeStart: onChangeStart }));
-            }
-        }
-        return React.createElement(React.Fragment, null,
-            Axis('x'),
-            " ",
-            Axis('y'),
-            " ",
-            Axis('z'));
-    }
-    function AnimWaitEditor() {
-        var curve = app.selection.onlyOneSelectedCurve;
-        var css = { width: '50%' };
-        if (!curve) {
-            return React.createElement(NumberBox, { style: css, disabled: true });
-        }
-        else {
-            function onChangeValue(val) {
-                app.recordCurveModify(curve);
-                curve.animWait = val;
-                curve.dirtyForAnimation = true;
-                app.getUI().refreshSelectionControlPoints();
-            }
-            function onChangeDelta(val) {
-                curve.animWait += val;
-                curve.dirtyForAnimation = true;
-                app.getUI().refreshSelectionControlPoints();
-            }
-            function onChangeStart() {
-                app.recordCurveModify(curve);
-            }
-            var showValue = Math.round(curve.animWait);
-            return React.createElement(NumberBox, { style: css, step: 1, value: showValue, onChangeDelta: onChangeDelta, onChangeValue: onChangeValue, onChangeStart: onChangeStart });
-        }
+                React.createElement(IndeterminateCheckbox, { disabled: curves.length === 0, indeterminate: !allHidden && !allVisible, checked: allVisible, onChange: onVisibleChange })));
     }
     function CurveList() {
         var sel = app.selection.onlyOneSelectedCurve;
@@ -3909,7 +3895,10 @@ var main = (function (exports) {
                 console.log('onFileChange', e, files);
             }
             return React.createElement(React.Fragment, null,
-                React.createElement("div", null, playbutton),
+                React.createElement("div", null,
+                    playbutton,
+                    " ",
+                    React.createElement("button", { onClick: onClickShowFishGroupEditor }, "\u663E\u793A\u9C7C\u9635\u754C\u9762")),
                 React.createElement("div", null,
                     React.createElement("button", { onClick: onClickExport, disabled: !app.selection.onlyOneSelectedCurve }, "\u5BFC\u51FA"),
                     React.createElement("button", { onClick: onClickExportAll }, "\u5BFC\u51FA\u5168\u90E8")),
@@ -3924,6 +3913,9 @@ var main = (function (exports) {
                     React.createElement("input", { style: { width: '100px', verticalAlign: 'middle' }, type: 'range', min: 0, max: 5, step: 0.1, value: control.timeScale, onChange: onTimeScaleChange }),
                     control.timeScale));
         }
+    }
+    function onClickShowFishGroupEditor() {
+        app.getUI().setState({ showFishGroupEditor: true });
     }
     //# sourceMappingURL=AnimationEditor.js.map
 
@@ -3947,11 +3939,113 @@ var main = (function (exports) {
     }
     //# sourceMappingURL=Panel.js.map
 
+    class FishGroupEditor extends React.Component {
+        constructor(props) {
+            super(props);
+        }
+        render() {
+            console.log(this.props);
+            let editors = app.fishGroup.map(item => {
+                return ToGroupEditLine(this, item);
+            });
+            return this.props.visible ? (React.createElement("div", { id: 'fishgrouplayer' },
+                React.createElement("div", { className: 'fishgroupspace' }),
+                React.createElement("div", { id: 'fishgroupbox' },
+                    React.createElement("button", { onClick: this.onClickAdd.bind(this) }, "Add"),
+                    React.createElement("button", { onClick: this.onClickClose.bind(this) }, "\u5173\u95ED"),
+                    React.createElement("table", null,
+                        React.createElement("thead", null,
+                            React.createElement("tr", null,
+                                React.createElement("td", null, "curve"),
+                                React.createElement("td", null, "wait"),
+                                React.createElement("td", null, "offset"),
+                                React.createElement("td", null, "visible"))),
+                        React.createElement("tbody", null, editors))),
+                React.createElement("div", { className: 'fishgroupspace' }))) : null;
+        }
+        onClickAdd() {
+            app.fishGroup.unshift(new FishGroup());
+            app.onFishGroupChange();
+            this.setState({});
+        }
+        onClickClose() {
+            app.getUI().setState({ showFishGroupEditor: false });
+        }
+    }
+    function ToGroupEditLine(parent, item) {
+        var onChangeAnimWait = val => {
+            if (val >= 0) {
+                item.animWait = val;
+                item.dirtyForAnimation = true;
+            }
+            app.onFishGroupChange();
+            parent.setState({});
+        };
+        var onChangeOffset = (key) => {
+            return val => {
+                item.animOffset[key] = val;
+                item.dirtyForAnimation = true;
+                app.onFishGroupChange();
+                parent.setState({});
+            };
+        };
+        var onVisibleChange = e => {
+            item.visible = !!e.target.checked;
+            item.dirtyForAnimation = true;
+            app.onFishGroupChange();
+            parent.setState({});
+        };
+        var onClickDelete = e => {
+            var idx = app.fishGroup.indexOf(item);
+            if (idx >= 0) {
+                app.fishGroup.splice(idx, 1);
+            }
+            app.onFishGroupChange();
+            parent.setState({});
+        };
+        var cssOffset = { width: '30px' };
+        return React.createElement("tr", { key: item.uuid },
+            React.createElement("td", null, CurveList$1(parent, item)),
+            React.createElement("td", null,
+                React.createElement(NumberBox, { value: item.animWait, step: 1, min: 0, onChangeValue: onChangeAnimWait })),
+            React.createElement("td", null,
+                "X:",
+                React.createElement(NumberBox, { style: cssOffset, value: item.animOffset.x, step: 1, onChangeValue: onChangeOffset('x') }),
+                "Y:",
+                React.createElement(NumberBox, { style: cssOffset, value: item.animOffset.y, step: 1, onChangeValue: onChangeOffset('y') }),
+                "Z:",
+                React.createElement(NumberBox, { style: cssOffset, value: item.animOffset.z, step: 1, onChangeValue: onChangeOffset('z') })),
+            React.createElement("td", null,
+                React.createElement("input", { type: 'checkbox', checked: item.visible, onChange: onVisibleChange })),
+            React.createElement("td", null,
+                React.createElement("button", { onClick: onClickDelete }, "\u5220\u9664")));
+    }
+    function CurveList$1(parent, item) {
+        var list = app.curves.map(cc => {
+            var selected = cc === item.curve;
+            return React.createElement("option", { key: cc.uuid, value: cc.uuid }, cc.name);
+        });
+        list.unshift(React.createElement("option", { key: '--', value: '' }, "--"));
+        function onSelectChange(e) {
+            var uuid = (e.target.value);
+            var curve = app.getCurveByUUID(uuid);
+            if (curve) {
+                item.curve = curve;
+                item.dirtyForAnimation = true;
+            }
+            app.onFishGroupChange();
+            parent.setState({});
+        }
+        var value = item.curve ? item.curve.uuid : '';
+        return React.createElement("select", { onChange: onSelectChange, value: value }, list);
+    }
+    //# sourceMappingURL=FishGroupEditor.js.map
+
     //import { NumberBox } from './controls/NumberBox'
     class UIApplication extends React.Component {
         constructor(props) {
             super(props);
-            this.state = { value: 0 };
+            this.state = { value: 0, showFishGroupEditor: false };
         }
         //call this when selection changed
         //or control point data changed
@@ -3962,18 +4056,20 @@ var main = (function (exports) {
         }
         render() {
             return React.createElement(React.Fragment, null,
-                React.createElement(Panel, { title: 'point editor' },
-                    React.createElement(ControlPointEditor, null)),
-                React.createElement(Panel, { title: 'curve editor' },
-                    React.createElement(CurveEditor, null)),
-                React.createElement(Panel, { title: '\u52A8\u753B' },
-                    React.createElement(AnimationEditor, null)));
+                React.createElement("div", { id: 'uilayer' },
+                    React.createElement(Panel, { title: 'point editor' },
+                        React.createElement(ControlPointEditor, null)),
+                    React.createElement(Panel, { title: 'curve editor' },
+                        React.createElement(CurveEditor, null)),
+                    React.createElement(Panel, { title: '\u52A8\u753B' },
+                        React.createElement(AnimationEditor, null))),
+                React.createElement(FishGroupEditor, { visible: this.state.showFishGroupEditor }));
         }
     }
     var appRef = React.createRef();
     function init() {
         var uilayer = document.createElement('div');
-        uilayer.id = 'uilayer';
+        uilayer.id = '';
         ReactDOM.render(React.createElement(UIApplication, { ref: appRef }), uilayer);
         document.body.appendChild(uilayer);
     }
@@ -4040,6 +4136,7 @@ var main = (function (exports) {
             this.controlPointObjects = [];
             //rootGui: dat.GUI = new dat.GUI();
             this.clock = new THREE.Clock(true);
+            this.fishGroup = [];
             this._deltaTime = 0;
             this._records = [];
             this._isCameraMoving = false;
@@ -4301,7 +4398,11 @@ var main = (function (exports) {
             for (var c of this.curves) {
                 curves.push(c.toJSON());
             }
-            return { curves };
+            var fishGroups = [];
+            for (var f of this.fishGroup) {
+                fishGroups.push(f.toJSON());
+            }
+            return { curves, fishGroups };
         }
         fromJSON(obj) {
             if (obj && obj.curves && Array.isArray(obj.curves)) {
@@ -4330,6 +4431,14 @@ var main = (function (exports) {
                 }
             }
             this._records.length = 0;
+            this.fishGroup.length = 0;
+            if (obj && obj.fishGroups) {
+                for (var fo of obj.fishGroups) {
+                    let f = new FishGroup();
+                    f.fromJSON(fo);
+                    this.fishGroup.push(f);
+                }
+            }
         }
         addNewCurve(type) {
             var curve = new CurveObject({ type: type });
@@ -4346,6 +4455,9 @@ var main = (function (exports) {
             }
         }
         onCurveChange(e) {
+            localStorage.setItem('default_slot', JSON.stringify(this.toJSON()));
+        }
+        onFishGroupChange(e) {
             localStorage.setItem('default_slot', JSON.stringify(this.toJSON()));
         }
         resetCamera() {
@@ -4430,18 +4542,24 @@ var main = (function (exports) {
                 TotalTime: 0,
             };
             var maxtime = 0;
-            this.curves.forEach((cc, index) => {
-                file.file(cc.name + '.anim3', cc.generateBuffer());
+            this.fishGroup.forEach(item => {
                 configJson.redfish.push(false);
                 configJson.fistList.push(0);
-                configJson.fishTimes.push(cc.animWait);
+                configJson.fishTimes.push(item.animWait);
                 configJson.positionOffsets.push({
-                    x: cc.animOffset.x,
-                    y: cc.animOffset.y,
-                    z: cc.animOffset.z,
+                    x: item.animOffset.x,
+                    y: item.animOffset.y,
+                    z: item.animOffset.z,
                 });
+                var index = this.curves.indexOf(item.curve);
                 configJson.traceIDs.push(index);
-                maxtime = Math.max(maxtime, cc.generateAnimationClip().duration);
+                var clip = item.generateAnimationClip();
+                if (clip) {
+                    maxtime = Math.max(maxtime, clip.duration);
+                }
+            });
+            this.curves.forEach((cc, index) => {
+                file.file(cc.name + '.anim3', cc.generateBuffer());
             });
             configJson.TotalTime = maxtime * 1000;
             file.file('config.json', 'var AllYuZheng=[];\nAllYuZheng[0]=' + JSON.stringify(configJson, null, '    '));
